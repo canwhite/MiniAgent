@@ -1,0 +1,22 @@
+{
+  "name": "MiniAgent",
+  "version": "1.0.0",
+  "description": "Simple Agent implementation based on pi-coding-agent",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run index.ts",
+    "example": "bun run index.ts --example"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.51.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
