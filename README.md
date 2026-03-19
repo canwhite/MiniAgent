@@ -1,4 +1,4 @@
-# agent-study - 简单 Agent 实现
+# MiniAgent - 简单 Agent 实现
 
 基于 `@mariozechner/pi-coding-agent` 的 Tool Calling 原理说明。
 
@@ -89,23 +89,23 @@ const response = await agent.chat(userMessage);
 
 ## 内置工具
 
-| 工具 | 功能 |
-|------|------|
-| `bash` | 执行 shell 命令 |
-| `read_file` | 读取文件内容 |
-| `write_file` | 写入文件 |
-| `web_search` | 网络搜索 |
-| `get_current_time` | 获取当前时间 |
+| 工具               | 功能            |
+| ------------------ | --------------- |
+| `bash`             | 执行 shell 命令 |
+| `read_file`        | 读取文件内容    |
+| `write_file`       | 写入文件        |
+| `web_search`       | 网络搜索        |
+| `get_current_time` | 获取当前时间    |
 
 ## 与 Krebs 的对应关系
 
-| Krebs | 简单实现 |
-|-------|---------|
-| `src/agent/tools/base.ts` | Tool 接口定义 |
-| `src/agent/tools/builtin.ts` | 工具实现示例 |
-| `src/agent/core/agent.ts` | Agent 核心逻辑 |
-| `src/provider/` | LLM Provider |
-| `src/agent/tool-parser.ts` | 工具调用解析 |
+| Krebs                        | 简单实现       |
+| ---------------------------- | -------------- |
+| `src/agent/tools/base.ts`    | Tool 接口定义  |
+| `src/agent/tools/builtin.ts` | 工具实现示例   |
+| `src/agent/core/agent.ts`    | Agent 核心逻辑 |
+| `src/provider/`              | LLM Provider   |
+| `src/agent/tool-parser.ts`   | 工具调用解析   |
 
 ## 参考资源
 
