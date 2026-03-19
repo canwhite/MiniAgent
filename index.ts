@@ -172,7 +172,21 @@ async function createSession() {
         errors: [],
         runtime: createExtensionRuntime(),
       }),
-      getSkills: () => ({ skills: [], diagnostics: [] }),
+      getSkills: () => ({
+        skills: [
+          {
+            name: "web-search-tool",
+            description:
+              "提供网页搜索功能示例，演示如何使用 curl 进行 HTTP 请求",
+            filePath:
+              "/Users/zack/Desktop/MiniAgent/skills/web-search-tool/SKILL.md",
+            baseDir: "/Users/zack/Desktop/MiniAgent/skills/web-search-tool",
+            source: "inline",
+            disableModelInvocation: false,
+          },
+        ],
+        diagnostics: [],
+      }),
       getPrompts: () => ({ prompts: [], diagnostics: [] }),
       getThemes: () => ({ themes: [], diagnostics: [] }),
       getAgentsFiles: () => ({ agentsFiles: [] }),
