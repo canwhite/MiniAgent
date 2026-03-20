@@ -8,6 +8,7 @@ type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  isStreaming?: boolean;
 };
 
 type WSMessage =
@@ -41,10 +42,9 @@ function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [sessionId, setSessionId] = useState<string>("");
-  const [currentResponse, setCurrentResponse] = useState("");
 
   const wsRef = useRef<WebSocket | null>(null);
-  const currentResponseRef = useRef("");
+  const streamingMessageIdRef = useRef<string | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -68,25 +68,35 @@ function App() {
             break;
 
           case "text_delta":
-            currentResponseRef.current += data.delta;
-            setCurrentResponse(currentResponseRef.current);
+            if (!streamingMessageIdRef.current) {
+              // Create new streaming message
+              const newId = crypto.randomUUID();
+              streamingMessageIdRef.current = newId;
+              setMessages((prev) => [
+                ...prev,
+                { id: newId, role: "assistant", content: data.delta, isStreaming: true },
+              ]);
+            } else {
+              // Update existing streaming message
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === streamingMessageIdRef.current
+                    ? { ...msg, content: msg.content + data.delta }
+                    : msg,
+                ),
+              );
+            }
 
+            // Reset completion timer
             if (typingTimeoutRef.current) {
               clearTimeout(typingTimeoutRef.current);
             }
             typingTimeoutRef.current = setTimeout(() => {
-              if (currentResponseRef.current) {
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: crypto.randomUUID(),
-                    role: "assistant",
-                    content: currentResponseRef.current,
-                  },
-                ]);
-                currentResponseRef.current = "";
-                setCurrentResponse("");
-              }
+              // Mark streaming as complete
+              streamingMessageIdRef.current = null;
+              setMessages((prev) =>
+                prev.map((msg) => ({ ...msg, isStreaming: false })),
+              );
             }, 1000);
             break;
 
@@ -130,7 +140,7 @@ function App() {
       const container = messagesContainerRef.current;
       container.scrollTop = container.scrollHeight;
     }
-  }, [messages, currentResponse]);
+  }, [messages]);
 
   const sendMessage = () => {
     const messageText = input.trim();
@@ -146,8 +156,8 @@ function App() {
     ]);
     setInput("");
 
-    currentResponseRef.current = "";
-    setCurrentResponse("");
+    // Reset streaming state
+    streamingMessageIdRef.current = null;
 
     wsRef.current.send(
       JSON.stringify({
@@ -184,16 +194,6 @@ function App() {
             />
           </div>
         ))}
-
-        {currentResponse && (
-          <div class="message assistant">
-            <div class="avatar">AI</div>
-            <div
-              class="message-content"
-              dangerouslySetInnerHTML={{ __html: formatMessage(currentResponse) }}
-            />
-          </div>
-        )}
       </div>
 
       <div class="input-area">
