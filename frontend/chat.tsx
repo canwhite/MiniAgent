@@ -43,7 +43,7 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const currentResponseRef = useRef("");
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   const connect = useCallback(() => {
     setIsConnecting(true);
@@ -123,7 +123,10 @@ function App() {
   }, [connect]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messagesContainerRef.current) {
+      const container = messagesContainerRef.current;
+      container.scrollTop = container.scrollHeight;
+    }
   }, [messages, currentResponse]);
 
   const sendMessage = () => {
@@ -158,21 +161,19 @@ function App() {
     }
   };
 
+  const statusClass = isConnected ? "connected" : isConnecting ? "connecting" : "error";
+
   return (
     <>
       <div class="header">
-        <div
-          class={`status-dot ${
-            isConnected ? "connected" : isConnecting ? "connecting" : "error"
-          }`}
-        />
+        <div class={`status-dot ${statusClass}`} />
         <h1>MiniAgent Chat</h1>
         {sessionId && <span class="session-id">{sessionId}</span>}
       </div>
 
-      <div class="messages">
+      <div class="messages" ref={messagesContainerRef}>
         {messages.map((msg) => (
-          <div class={`message ${msg.role}`}>
+          <div class={`message ${msg.role}`} key={msg.id}>
             <div class="avatar">{msg.role === "user" ? "U" : "AI"}</div>
             <div
               class="message-content"
@@ -186,14 +187,10 @@ function App() {
             <div class="avatar">AI</div>
             <div
               class="message-content"
-              dangerouslySetInnerHTML={{
-                __html: formatMessage(currentResponse),
-              }}
+              dangerouslySetInnerHTML={{ __html: formatMessage(currentResponse) }}
             />
           </div>
         )}
-
-        <div ref={messagesEndRef} />
       </div>
 
       <div class="input-area">

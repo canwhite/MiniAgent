@@ -339,6 +339,10 @@ const server = Bun.serve({
             entrypoints: [filePath],
             target: "browser",
             minify: false,
+            jsx: {
+              runtime: "automatic",
+              importSource: "preact",
+            },
           });
 
           return new Response(transpiled.outputs[0], {

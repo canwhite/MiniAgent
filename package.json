@@ -13,8 +13,7 @@
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.51.5",
-    "preact": "^10.29.0",
-    "solid-js": "^1.9.11"
+    "preact": "^10.29.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
