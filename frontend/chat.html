@@ -149,6 +149,84 @@
       font-size: 0.85rem;
     }
 
+    /* Markdown styles */
+    .message-content h1,
+    .message-content h2,
+    .message-content h3,
+    .message-content h4,
+    .message-content h5,
+    .message-content h6 {
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+      font-weight: 600;
+    }
+
+    .message-content h1 { font-size: 1.5rem; }
+    .message-content h2 { font-size: 1.25rem; }
+    .message-content h3 { font-size: 1.1rem; }
+
+    .message-content ul,
+    .message-content ol {
+      margin-left: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .message-content li {
+      margin-bottom: 0.25rem;
+    }
+
+    .message-content a {
+      color: #667eea;
+      text-decoration: underline;
+    }
+
+    .message-content a:hover {
+      color: #764ba2;
+    }
+
+    .message-content blockquote {
+      border-left: 3px solid #667eea;
+      padding-left: 1rem;
+      margin: 0.5rem 0;
+      color: #aaa;
+      font-style: italic;
+    }
+
+    .message-content table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 0.5rem 0;
+    }
+
+    .message-content th,
+    .message-content td {
+      border: 1px solid #0f3460;
+      padding: 0.5rem;
+      text-align: left;
+    }
+
+    .message-content th {
+      background: #0f3460;
+      font-weight: 600;
+    }
+
+    .message-content hr {
+      border: none;
+      border-top: 1px solid #0f3460;
+      margin: 1rem 0;
+    }
+
+    /* Highlight.js dark theme adjustments */
+    .message-content pre code.hljs {
+      background: transparent;
+      padding: 0;
+    }
+
+    .hljs {
+      background: #0f3460 !important;
+      color: #e0e0e0;
+    }
+
     .input-area {
       padding: 1.5rem;
       background: #16213e;
