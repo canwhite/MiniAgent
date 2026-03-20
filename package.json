@@ -7,7 +7,9 @@
   "private": true,
   "scripts": {
     "start": "bun run index.ts",
-    "example": "bun run index.ts --example"
+    "example": "bun run index.ts --example",
+    "server": "bun run server.ts",
+    "test": "bun run test-gateway.ts"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.51.5"
