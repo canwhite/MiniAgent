@@ -1,6 +1,9 @@
 import { render } from "preact";
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 
+/// <reference lib="dom" />
+/// <reference types="preact/jsx-runtime" />
+
 type Message = {
   id: string;
   role: "user" | "assistant";
