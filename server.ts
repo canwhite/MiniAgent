@@ -12,53 +12,6 @@ import {
 import type { Model } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 
-const webSearchTool: ToolDefinition = {
-  name: "web_search",
-  label: "Web Search",
-  description: "在互联网上搜索信息。用于查找最新资讯、文档、技术问题等。",
-  parameters: Type.Object({
-    query: Type.String({ description: "搜索查询词" }),
-    numResults: Type.Optional(
-      Type.Number({ description: "返回结果数量，默认 10" }),
-    ),
-  }),
-  execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
-    const { query, numResults = 10 } = params as {
-      query: string;
-      numResults?: number;
-    };
-    console.log(`[web_search] 搜索: ${query}`);
-
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify(
-            {
-              query,
-              results: [
-                {
-                  title: `关于 "${query}" 的搜索结果 1`,
-                  url: "https://example.com/1",
-                  snippet: "这是搜索结果的摘要...",
-                },
-                {
-                  title: `关于 "${query}" 的搜索结果 2`,
-                  url: "https://example.com/2",
-                  snippet: "另一个搜索结果的摘要...",
-                },
-              ],
-            },
-            null,
-            2,
-          ),
-        },
-      ],
-      details: {},
-    };
-  },
-};
-
 const getCurrentTimeTool: ToolDefinition = {
   name: "get_current_time",
   label: "Get Current Time",
@@ -164,7 +117,7 @@ async function createSession(sessionId: string) {
     authStorage,
     modelRegistry,
     tools: [createReadTool(cwd), createBashTool(cwd), createWriteTool(cwd)],
-    customTools: [webSearchTool, getCurrentTimeTool],
+    customTools: [getCurrentTimeTool],
     sessionManager: SessionManager.inMemory(),
     resourceLoader: {
       getExtensions: () => ({
@@ -226,9 +179,29 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+function getContentType(filePath: string): string {
+  const ext = filePath.split(".").pop();
+  const types: Record<string, string> = {
+    js: "application/javascript; charset=utf-8",
+    ts: "application/javascript; charset=utf-8",
+    tsx: "application/javascript; charset=utf-8",
+    jsx: "application/javascript; charset=utf-8",
+    css: "text/css; charset=utf-8",
+    html: "text/html; charset=utf-8",
+    json: "application/json; charset=utf-8",
+    svg: "image/svg+xml",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    ico: "image/x-icon",
+  };
+  return types[ext || ""] || "application/octet-stream";
+}
+
 async function handleApiMessage(req: Request): Promise<Response> {
   try {
-    const body = await req.json() as { message?: string; sessionId?: string };
+    const body = (await req.json()) as { message?: string; sessionId?: string };
     const { message, sessionId } = body;
 
     if (!message || typeof message !== "string") {
@@ -311,7 +284,7 @@ function handleDeleteSession(sessionId: string): Response {
 
 const server = Bun.serve({
   port: PORT,
-  fetch(req) {
+  async fetch(req) {
     const url = new URL(req.url);
 
     if (req.method === "OPTIONS") {
@@ -344,6 +317,45 @@ const server = Bun.serve({
         { status: "ok", sessions: sessions.size },
         { headers: corsHeaders },
       );
+    }
+
+    // Serve chat UI
+    if (url.pathname === "/" && req.method === "GET") {
+      return new Response(Bun.file("./frontend/chat.html"), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    // Serve frontend static files with Bun's transpiler
+    if (url.pathname.startsWith("/frontend/")) {
+      const filePath = "." + url.pathname;
+      const file = Bun.file(filePath);
+
+      // Check if file exists
+      if (await file.exists()) {
+        // For TSX/JSX files, transpile on the fly
+        if (filePath.endsWith(".tsx") || filePath.endsWith(".jsx")) {
+          const transpiled = await Bun.build({
+            entrypoints: [filePath],
+            target: "browser",
+            minify: false,
+          });
+
+          return new Response(transpiled.outputs[0], {
+            headers: {
+              "Content-Type": "application/javascript; charset=utf-8",
+              "Access-Control-Allow-Origin": "*",
+            },
+          });
+        }
+
+        return new Response(file, {
+          headers: {
+            "Content-Type": getContentType(filePath),
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      }
     }
 
     return new Response("Not Found", { status: 404, headers: corsHeaders });
@@ -379,7 +391,10 @@ const server = Bun.serve({
     },
     message(ws, message) {
       try {
-        const data = JSON.parse(message.toString()) as { type?: string; message?: string };
+        const data = JSON.parse(message.toString()) as {
+          type?: string;
+          message?: string;
+        };
         const sessionId = (ws as any).data?.sessionId;
         const session = getSession(sessionId!);
 
