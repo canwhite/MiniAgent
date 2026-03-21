@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MiniAgent Chat</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.40/dist/katex.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/atom-one-dark.min.css">
   <style>
     * {
       margin: 0;
@@ -149,6 +151,24 @@
       font-size: 0.85rem;
     }
 
+    .message-content code:not(pre code) {
+      background: #0f3460;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+
+    /* KaTeX styles */
+    .katex-display {
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 0.5rem 0;
+    }
+
+    .message-content .katex {
+      font-size: 1.1em;
+    }
+
     /* Markdown styles */
     .message-content h1,
     .message-content h2,
@@ -192,6 +212,14 @@
       font-style: italic;
     }
 
+    .message-content blockquote p {
+      margin-bottom: 0.25rem;
+    }
+
+    .message-content blockquote p:last-child {
+      margin-bottom: 0;
+    }
+
     .message-content table {
       border-collapse: collapse;
       width: 100%;
@@ -210,21 +238,51 @@
       font-weight: 600;
     }
 
+    .message-content tr:nth-child(even) {
+      background: rgba(15, 52, 96, 0.3);
+    }
+
+    .message-content tr:hover {
+      background: rgba(102, 126, 234, 0.1);
+    }
+
     .message-content hr {
       border: none;
       border-top: 1px solid #0f3460;
       margin: 1rem 0;
     }
 
-    /* Highlight.js dark theme adjustments */
+    .message-content img {
+      max-width: 100%;
+      border-radius: 8px;
+      margin: 0.5rem 0;
+    }
+
+    /* Task list */
+    .message-content input[type="checkbox"] {
+      margin-right: 0.5rem;
+      accent-color: #667eea;
+    }
+
+    .message-content ul.contains-task-list {
+      list-style: none;
+      margin-left: 0.5rem;
+    }
+
+    .message-content li.task-list-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
+
+    /* Highlight.js theme overrides */
     .message-content pre code.hljs {
-      background: transparent;
+      background: transparent !important;
       padding: 0;
     }
 
-    .hljs {
-      background: #0f3460 !important;
-      color: #e0e0e0;
+    .message-content pre {
+      background: #282c34 !important;
     }
 
     .input-area {

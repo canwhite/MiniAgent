@@ -1,23 +1,30 @@
 import { render } from "preact";
 import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { marked } from "marked";
+import markedKatex from "marked-katex-extension";
 import hljs from "highlight.js";
 
 /// <reference lib="dom" />
 /// <reference types="preact/jsx-runtime" />
 
-// Configure marked with highlight.js
+marked.use(
+  markedKatex({
+    throwOnError: false,
+    errorColor: "#ef4444",
+  })
+);
+
 marked.setOptions({
   breaks: true,
   gfm: true,
-} as any);
+});
 
-// Custom renderer for syntax highlighting
-const renderer = new marked.Renderer();
-(renderer.code as any) = (code: string, language: string | undefined) => {
-  const validLang = language && hljs.getLanguage(language) ? language : "plaintext";
-  const highlighted = hljs.highlight(code, { language: validLang }).value;
-  return `<pre><code class="hljs language-${validLang}">${highlighted}</code></pre>`;
+const renderer = {
+  code({ text, lang }: { text: string; lang?: string }) {
+    const validLang = lang && hljs.getLanguage(lang) ? lang : "plaintext";
+    const highlighted = hljs.highlight(text, { language: validLang }).value;
+    return `<pre><code class="hljs language-${validLang}">${highlighted}</code></pre>`;
+  },
 };
 
 marked.use({ renderer });
