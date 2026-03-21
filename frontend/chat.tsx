@@ -122,15 +122,29 @@ function App() {
             break;
 
           case "tool_start":
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                role: "tool",
-                content: `🔧 执行工具: ${data.tool}\n📝 参数: ${JSON.stringify(data.args, null, 2)}`,
-                isStreaming: false,
-              },
-            ]);
+            if (data.tool === "write") {
+              const content = data.args?.content || "";
+              const fileName = data.args?.path || "";
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "tool",
+                  content: `📝 写入文件: ${fileName}\n\n\`\`\`\n${content}\n\`\`\``,
+                  isStreaming: false,
+                },
+              ]);
+            } else {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "tool",
+                  content: `🔧 执行工具: ${data.tool}\n📝 参数: ${JSON.stringify(data.args, null, 2)}`,
+                  isStreaming: false,
+                },
+              ]);
+            }
             break;
 
           case "tool_end":
@@ -140,7 +154,7 @@ function App() {
                 {
                   id: crypto.randomUUID(),
                   role: "tool",
-                  content: `✅ ${data.tool} 完成: ${data.result}`,
+                  content: `✅ 写入完成`,
                   isStreaming: false,
                 },
               ]);
