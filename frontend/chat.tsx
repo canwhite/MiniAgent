@@ -31,7 +31,7 @@ marked.use({ renderer });
 
 type Message = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "tool";
   content: string;
   isStreaming?: boolean;
 };
@@ -39,6 +39,8 @@ type Message = {
 type WSMessage =
   | { type: "connected"; sessionId: string; message?: string }
   | { type: "text_delta"; delta: string }
+  | { type: "tool_start"; tool: string; args: any }
+  | { type: "tool_end"; tool: string; success: boolean; result: string }
   | { type: "error"; message: string };
 
 function formatMessage(content: string): string {
@@ -117,6 +119,32 @@ function App() {
                 prev.map((msg) => ({ ...msg, isStreaming: false })),
               );
             }, 1000);
+            break;
+
+          case "tool_start":
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "tool",
+                content: `🔧 执行工具: ${data.tool}\n📝 参数: ${JSON.stringify(data.args, null, 2)}`,
+                isStreaming: false,
+              },
+            ]);
+            break;
+
+          case "tool_end":
+            if (data.tool === "write" && data.success) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "tool",
+                  content: `✅ ${data.tool} 完成: ${data.result}`,
+                  isStreaming: false,
+                },
+              ]);
+            }
             break;
 
           case "error":
@@ -206,10 +234,16 @@ function App() {
       <div class="messages" ref={messagesContainerRef}>
         {messages.map((msg) => (
           <div class={`message ${msg.role}`} key={msg.id}>
-            <div class="avatar">{msg.role === "user" ? "U" : "AI"}</div>
+            <div class="avatar">
+              {msg.role === "user" ? "U" : msg.role === "tool" ? "T" : "AI"}
+            </div>
             <div
               class="message-content"
-              dangerouslySetInnerHTML={{ __html: formatMessage(msg.content) }}
+              dangerouslySetInnerHTML={{
+                __html: msg.role === "tool" 
+                  ? msg.content.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                  : formatMessage(msg.content)
+              }}
             />
           </div>
         ))}

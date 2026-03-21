@@ -394,6 +394,25 @@ const server = Bun.serve({
                 }),
               );
             }
+          } else if (event.type === "tool_execution_start") {
+            ws.send(
+              JSON.stringify({
+                type: "tool_start",
+                tool: event.toolName,
+                args: event.args,
+              }),
+            );
+          } else if (event.type === "tool_execution_end") {
+            const result = event.result;
+            const content = result?.content?.[0]?.text || "";
+            ws.send(
+              JSON.stringify({
+                type: "tool_end",
+                tool: event.toolName,
+                success: !event.isError,
+                result: content,
+              }),
+            );
           }
         });
       });
