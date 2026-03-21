@@ -385,6 +385,7 @@ const server = Bun.serve({
         );
 
         session.subscribe((event) => {
+          console.log("--event--", JSON.stringify(event.type, null, 2));
           if (event.type === "message_update") {
             if (event.assistantMessageEvent.type === "text_delta") {
               ws.send(
@@ -393,6 +394,8 @@ const server = Bun.serve({
                   delta: event.assistantMessageEvent.delta,
                 }),
               );
+            } else {
+              console.log("--event--", JSON.stringify(event, null, 2));
             }
           } else if (event.type === "tool_execution_start") {
             ws.send(

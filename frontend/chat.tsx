@@ -32,6 +32,7 @@ marked.use({ renderer });
 type Message = {
   id: string;
   role: "user" | "assistant" | "tool";
+  toolType?: "write" | "other";
   content: string;
   isStreaming?: boolean;
 };
@@ -130,7 +131,8 @@ function App() {
                 {
                   id: crypto.randomUUID(),
                   role: "tool",
-                  content: `📝 写入文件: ${fileName}\n\n\`\`\`\n${content}\n\`\`\``,
+                  toolType: "write",
+                  content: `📝 写入文件: ${fileName}\n\n${content}`,
                   isStreaming: false,
                 },
               ]);
@@ -140,6 +142,7 @@ function App() {
                 {
                   id: crypto.randomUUID(),
                   role: "tool",
+                  toolType: "other",
                   content: `🔧 执行工具: ${data.tool}\n📝 参数: ${JSON.stringify(data.args, null, 2)}`,
                   isStreaming: false,
                 },
@@ -254,7 +257,7 @@ function App() {
             <div
               class="message-content"
               dangerouslySetInnerHTML={{
-                __html: msg.role === "tool" 
+                __html: msg.role === "tool" && msg.toolType !== "write"
                   ? msg.content.replace(/</g, "&lt;").replace(/>/g, "&gt;")
                   : formatMessage(msg.content)
               }}
