@@ -6,9 +6,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run examples/index.ts",
+    "start": "bun run server.ts",
     "example": "bun run examples/index.ts --example",
-    "server": "bun run server.ts",
     "test": "bun run test-gateway.ts"
   },
   "dependencies": {
