@@ -13,8 +13,9 @@ import {
 import type { Model } from "@mariozechner/pi-ai";
 import { join } from "path";
 import { MonitorLogger } from "./lib/logger.js";
-import { saveSessionMeta, getAllSessions } from "./db/index.js";
+import { saveSessionMeta, getAllSessions, getSessionById } from "./db/index.js";
 import { getCurrentTimeTool } from "./tools/index.js";
+import { existsSync, readdirSync, readFileSync } from "fs";
 
 const apiKey =
   process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY || "";
@@ -70,10 +71,61 @@ import { type AgentSession } from "@mariozechner/pi-coding-agent";
 
 const sessions = new Map<string, AgentSession>();
 
+async function getSessionMessages(id: string) {
+  const sessionMeta = getSessionById(id) as any;
+  if (!sessionMeta || !sessionMeta.file_path) {
+    return null;
+  }
+
+  const filePath = sessionMeta.file_path;
+  
+  if (!existsSync(filePath)) {
+    return null;
+  }
+
+  const fileContent = readFileSync(filePath, "utf-8");
+  
+  const messages: any[] = [];
+  const lines = fileContent.split("\n").filter(Boolean);
+  
+  for (const line of lines) {
+    try {
+      const data = JSON.parse(line);
+      if (data.type === "message") {
+        const msg = data.message;
+        let content = "";
+        
+        if (msg.role === "user") {
+          content = msg.content?.[0]?.text || "";
+        } else if (msg.role === "assistant") {
+          content = msg.content?.map((c: any) => {
+            if (c.type === "text") return c.text;
+            if (c.type === "toolCall") return `[调用工具: ${c.name}]`;
+            return "";
+          }).join("") || "";
+        } else if (msg.role === "toolResult") {
+          content = msg.content?.[0]?.text || "";
+        }
+        
+        if (content) {
+          messages.push({
+            role: msg.role === "toolResult" ? "tool" : msg.role,
+            content,
+            timestamp: msg.timestamp,
+          });
+        }
+      }
+    } catch (e) {
+      // Skip invalid JSON lines
+    }
+  }
+  
+  return { sessionId: sessionMeta.session_id, messages };
+}
+
 async function createSession(sessionId: string) {
   const cwd = process.cwd();
   const sessionsPath = join(cwd, "sessions");
-  const filePath = join(sessionsPath, `${sessionId}.jsonl`);
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
 
@@ -136,8 +188,13 @@ async function createSession(sessionId: string) {
     },
   });
 
+  // Get actual file path from sessionManager
+  const files = readdirSync(sessionsPath);
+  const actualFile = files.find(f => f.endsWith(".jsonl")) || "";
+  const actualFilePath = actualFile ? join(sessionsPath, actualFile) : "";
+
   sessions.set(sessionId, result.session);
-  return { session: result.session, filePath };
+  return { session: result.session };
 }
 
 function getSession(sessionId: string) {
@@ -214,7 +271,34 @@ async function handleApiMessage(req: Request): Promise<Response> {
       usedSessionId = generateSessionId();
       const result = await createSession(usedSessionId);
       session = result.session;
-      saveSessionMeta(usedSessionId, message, result.filePath);
+      
+      // Get file path by matching timestamp
+      const cwd = process.cwd();
+      const sessionsPath = join(cwd, "sessions");
+      const sessionFiles = readdirSync(sessionsPath);
+      const sessionTsStr = usedSessionId.split("_")[1];
+      const sessionTs = sessionTsStr ? parseInt(sessionTsStr) : 0;
+      
+      let matchedFile = "";
+      let minDiff = Infinity;
+      
+      for (const f of sessionFiles) {
+        if (!f.includes("Z_") || !f.endsWith(".jsonl")) continue;
+        // Parse file timestamp: "2026-03-22T07-57-00-800Z_xxx.jsonl"
+        const tsPart = f.split("Z_")[0];
+        if (!tsPart) continue;
+        const tsClean = tsPart.replace("T", "").replace(/-/g, "");
+        const fileTs = parseInt(tsClean);
+        if (isNaN(fileTs)) continue;
+        const diff = Math.abs(fileTs - sessionTs);
+        if (diff < minDiff) {
+          minDiff = diff;
+          matchedFile = f;
+        }
+      }
+      
+      const sessionFilePath = matchedFile ? join(sessionsPath, matchedFile) : "";
+      saveSessionMeta(usedSessionId, message, sessionFilePath);
     }
 
     const events: any[] = [];
@@ -299,6 +383,15 @@ const server = Bun.serve({
       return Response.json({ sessions: allSessions }, { headers: corsHeaders });
     }
 
+    if (url.pathname.startsWith("/api/sessions/") && req.method === "GET") {
+      const id = url.pathname.split("/").pop()!;
+      const sessionMessages = await getSessionMessages(id);
+      if (!sessionMessages) {
+        return Response.json({ error: "Session 不存在" }, { status: 404, headers: corsHeaders });
+      }
+      return Response.json(sessionMessages, { headers: corsHeaders });
+    }
+
     if (url.pathname.startsWith("/api/sessions/") && req.method === "DELETE") {
       const sessionId = url.pathname.split("/").pop()!;
       return handleDeleteSession(sessionId);
@@ -369,7 +462,6 @@ const server = Bun.serve({
 
       createSession(sessionId).then((result) => {
         const session = result.session;
-        (ws as any).data.filePath = result.filePath;
         (ws as any).data.firstMessageSaved = false;
         ws.send(
           JSON.stringify({
@@ -495,7 +587,31 @@ const server = Bun.serve({
 
           const firstMessageSaved = (ws as any).data?.firstMessageSaved;
           if (!firstMessageSaved) {
-            const filePath = (ws as any).data?.filePath;
+            // Get file path by matching timestamp
+            const cwd = process.cwd();
+            const sessionsPath = join(cwd, "sessions");
+            const sessionFiles = readdirSync(sessionsPath);
+            const sessionTs = parseInt(sessionId!.split("_")[1]);
+            
+            let matchedFile = "";
+            let minDiff = Infinity;
+            
+            for (const f of sessionFiles) {
+              if (!f.includes("Z_") || !f.endsWith(".jsonl")) continue;
+              const tsPart = f.split("Z_")[0];
+              if (!tsPart) continue;
+              const tsClean = tsPart.replace("T", "").replace(/-/g, "");
+              const fileTs = parseInt(tsClean);
+              if (isNaN(fileTs)) continue;
+              const diff = Math.abs(fileTs - sessionTs);
+              if (diff < minDiff) {
+                minDiff = diff;
+                matchedFile = f;
+              }
+            }
+            
+            const filePath = matchedFile ? join(sessionsPath, matchedFile) : "";
+            
             if (filePath) {
               saveSessionMeta(sessionId!, data.message, filePath);
               (ws as any).data.firstMessageSaved = true;

@@ -31,3 +31,13 @@ export function getAllSessions() {
   `);
   return stmt.all();
 }
+
+export function getSessionById(id: string) {
+  const stmt = db.prepare(`
+    SELECT id, session_id, first_question, file_path, created_at
+    FROM sessions_meta
+    WHERE id = ? OR session_id = ?
+    LIMIT 1
+  `);
+  return stmt.get(id, id);
+}

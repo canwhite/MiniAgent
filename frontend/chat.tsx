@@ -70,6 +70,9 @@ function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [sessionId, setSessionId] = useState<string>("");
+  const [showHistory, setShowHistory] = useState(false);
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
@@ -322,6 +325,55 @@ function App() {
     connect();
   };
 
+  const loadSessions = async () => {
+    try {
+      const res = await fetch("/api/sessions/list");
+      const data = await res.json();
+      setSessions(data.sessions || []);
+    } catch (e) {
+      console.error("Failed to load sessions:", e);
+    }
+  };
+
+  const loadSessionMessages = async (sessionItem: any) => {
+    setIsLoadingSession(true);
+    try {
+      const res = await fetch(`/api/sessions/${sessionItem.id}`);
+      const data = await res.json();
+      
+      if (data.messages) {
+        const loadedMessages: Message[] = data.messages.map((msg: any, idx: number) => ({
+          id: `${idx}_${Date.now()}`,
+          role: msg.role,
+          content: msg.content,
+        }));
+        setMessages(loadedMessages);
+        setSessionId(data.sessionId);
+        
+        if (wsRef.current) {
+          wsRef.current.close();
+        }
+        connect();
+      }
+    } catch (e) {
+      console.error("Failed to load session messages:", e);
+    }
+    setIsLoadingSession(false);
+    setShowHistory(false);
+  };
+
+  const toggleHistory = () => {
+    if (!showHistory) {
+      loadSessions();
+    }
+    setShowHistory(!showHistory);
+  };
+
+  const formatTime = (timestamp: number) => {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  };
+
   const statusClass = isConnected ? "connected" : isConnecting ? "connecting" : "error";
 
   return (
@@ -330,6 +382,32 @@ function App() {
         <div class={`status-dot ${statusClass}`} />
         <h1>MiniAgent Chat</h1>
         {sessionId && <span class="session-id">{sessionId}</span>}
+        <button class="history-btn" onClick={toggleHistory}>📜</button>
+        {showHistory && (
+          <div class="history-dropdown">
+            <div class="history-dropdown-header">History</div>
+            {isLoadingSession ? (
+              <div class="history-dropdown-loading">Loading...</div>
+            ) : sessions.length === 0 ? (
+              <div class="history-dropdown-empty">No sessions</div>
+            ) : (
+              sessions.map((s) => (
+                <div
+                  class="history-dropdown-item"
+                  key={s.id}
+                  onClick={() => loadSessionMessages(s)}
+                >
+                  <div class="history-item-question">
+                    {s.first_question.length > 30 
+                      ? s.first_question.substring(0, 30) + "..." 
+                      : s.first_question}
+                  </div>
+                  <div class="history-item-time">{formatTime(s.created_at)}</div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       <div class="messages" ref={messagesContainerRef}>
