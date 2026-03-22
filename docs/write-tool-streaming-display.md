@@ -1,221 +1,93 @@
 # Write Tool 流式内容显示优化
 
-## 概述
+## 这里的"流式"是什么意思？
 
-本文档记录了对 write tool 显示体验的优化过程，实现了从简单的"准备→完成"两态显示，到流式显示生成进度、完整内容和完成状态的三阶段展示。
+"流式"就是像水流一样，一点一点地显示内容，而不是等到全部完成才显示出来。
 
-## 问题背景
+比如，LLM 在生成一个 Python 文件时：
+- **非流式**：等代码全部生成完，一次性显示
+- **流式**：代码生成一部分，就显示一部分（像有人在打字一样）
 
-### 原始问题
+## 我们要解决的问题
 
-用户反馈 write tool 的写入体验存在以下问题：
-- 漫长的等待时间（LLM 生成代码需要 10+ 秒）
-- 突然显示"写入完成"，中间过程不透明
-- 用户不知道正在写什么内容，写到了哪里
+### 之前的体验（不好）
 
-### 分析发现
+用户说"帮我写一个 Python 快速排序"后：
 
-通过分析 `monitor.log` 数据，发现了关键事实：
+1. **漫长的等待**（约 12 秒）
+   - 屏幕上什么都没有
+   - 用户不知道在干什么
 
-1. **write 工具执行极快**：只有 2-4 毫秒
-   ```
-   [03:31:57.446Z] TOOL_EXECUTION_START Tool: write
-   [03:31:57.446Z] TOOL_EXECUTION_END Tool: write
-   ```
+2. **突然出现结果**
+   - 一下子显示"写入完成"
+   - 用户都不知道写了什么
 
-2. **内容在 LLM 生成阶段就已完成**：
-   - `tool_execution_start` 时，Args 中已包含完整的 content
-   - 无法在执行阶段实现真正的"流式写入"
+### 期望的体验（好）
 
-3. **toolcall_delta 事件包含增量数据**：
-   ```
-   [03:31:23.727Z] toolcall_delta delta: ""
-   [03:31:23.842Z] toolcall_delta delta: "{"
-   [03:31:23.843Z] toolcall_delta delta: "\""
-   ```
-   LLM 生成工具调用时，通过 `toolcall_delta` 事件增量传输参数
+1. **立即反馈**
+   - 显示"准备写入文件..."
+   - 用户知道正在处理
 
-## 解决方案
+2. **实时进度**
+   - 显示"正在生成文件：quick_sort.py"
+   - 显示文件内容的一小部分
+   - 用户知道正在生成什么
 
-### 方案选择
+3. **完整内容**
+   - 显示整个文件的内容
+   - 用户可以检查代码是否正确
 
-经过讨论，选择了**混合方案（三阶段显示）**：
+4. **完成确认**
+   - 显示"写入完成！文件：quick_sort.py，大小：1234 bytes"
 
-1. **阶段1：参数生成进度** - 显示 LLM 正在生成什么
-2. **阶段2：完整内容展示** - 显示文件完整内容
-3. **阶段3：完成状态** - 显示写入结果和文件信息
+## 我们发现的关键事实
 
-### 事件流时间线
+通过查看日志文件 `monitor.log`，我们发现了这些：
+
+### 事实 1：写入超级快
 
 ```
-[时间] toolcall_start      → 阶段1开始：显示"准备写入文件..."
-[时间] toolcall_delta      → 阶段1进行中：实时更新文件名和内容预览
-[时间] toolcall_end        → 阶段1结束：参数生成完成
-[时间] tool_execution_start → 阶段2开始：显示完整文件内容
-[时间+2ms] tool_execution_end → 阶段3开始：显示完成状态
+[时间] tool_execution_start  开始写入
+[时间+1毫秒] tool_execution_end   写入完成
 ```
 
-## 实现细节
+write 工具只用了 1 毫秒！这不是等待的原因。
 
-### 服务器端（server.ts）
+### 事实 2：等待的时间在"思考"
 
-#### 1. 添加 toolcall_delta 事件处理
-
-```typescript
-else if (event.assistantMessageEvent.type === "toolcall_delta") {
-  const partial = event.assistantMessageEvent.partial;
-  const toolCall = partial.content?.[event.assistantMessageEvent.contentIndex];
-  if (toolCall?.type === "toolCall" && toolCall.name === "write") {
-    const args = (toolCall.arguments || {}) as {
-      path?: string;
-      content?: string;
-    };
-    logger.log(
-      `[TOOLCALL_DELTA] Tool: write, Path: ${args.path || "(generating)"}, Content length: ${args.content?.length || 0}`,
-    );
-    ws.send(JSON.stringify({
-      type: "tool_call_delta",
-      tool: "write",
-      path: args.path || "",
-      content: args.content || "",
-      contentIndex: event.assistantMessageEvent.contentIndex,
-    }));
-  }
-}
+```
+[03:08:44] 开始
+[03:08:56] 工具执行开始
 ```
 
-**关键点**：
-- 只处理 write 工具的 toolcall_delta 事件
-- 提取 `partial.arguments.path` 和 `partial.arguments.content`
-- 发送增量数据到前端
+中间的 12 秒，LLM 在**生成代码内容**，不是在写入文件。
 
-#### 2. 保留完整的 tool_execution_start 事件
+### 事实 3：LLM 生成是"流式"的
 
-原有的 `tool_execution_start` 处理保持不变，发送完整的 `args` 对象：
-```typescript
-ws.send(JSON.stringify({
-  type: "tool_start",
-  tool: event.toolName,
-  args: event.args,  // 包含完整的 path 和 content
-}));
+在 LLM 生成代码时，会发出很多 `toolcall_delta` 事件：
+```
+[时间] toolcall_delta: "d"
+[时间] toolcall_delta: "e"
+[时间] toolcall_delta: "f"
+[时间] toolcall_delta: " "
 ```
 
-### 前端（chat.tsx）
+每次发送一点点，像打字一样。
 
-#### 1. 扩展 WSMessage 类型
+## 解决方案：混合三阶段显示
 
-```typescript
-type WSMessage =
-  | { type: "tool_call_delta"; tool: string; path: string; content: string; contentIndex: number }
-  | { type: "tool_call_start"; tool: string; contentIndex: number }
-  | { type: "tool_start"; tool: string; args: any }
-  | { type: "tool_end"; tool: string; success: boolean; result: string }
-  // ... 其他类型
-```
+既然知道了问题，我们设计了三个阶段的显示：
 
-#### 2. 扩展 Message 类型
+### 阶段 1：参数生成进度（LLM 正在思考）
 
-```typescript
-type Message = {
-  id: string;
-  role: "user" | "assistant" | "tool";
-  toolType?: "write" | "other";
-  content: string;
-  isStreaming?: boolean;
-  isLoading?: boolean;
-  fullPath?: string;        // 完整文件路径
-  contentIndex?: number;     // 用于追踪工具调用
-};
-```
+当 LLM 开始生成工具调用时，立即显示：
 
-#### 3. 处理 tool_call_delta 事件
-
-```typescript
-case "tool_call_delta":
-  if (data.tool === "write") {
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (
-          msg.role === "tool" &&
-          msg.toolType === "write" &&
-          msg.isLoading &&
-          msg.contentIndex === data.contentIndex
-        ) {
-          const preview = data.content
-            ? data.content.substring(0, 100).replace(/\n/g, "\\n")
-            : "";
-          return {
-            ...msg,
-            content: `📝 正在生成文件${data.path ? `: ${data.path}` : ""}...\n📄 内容: ${preview}${data.content && data.content.length > 100 ? "..." : ""}`,
-            fullPath: data.path,
-          };
-        }
-        return msg;
-      })
-    );
-  }
-  break;
-```
-
-#### 4. 处理 tool_start 事件
-
-```typescript
-case "tool_start":
-  if (data.tool === "write") {
-    const fileName = data.args?.path || "";
-    const fileContent = data.args?.content || "";
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.role === "tool" && msg.toolType === "write" && msg.isLoading) {
-          const fullContent = `📝 写入文件: ${fileName}\n\n📄 内容：\n\`\`\`\n${fileContent}\n\`\`\``;
-          return {
-            ...msg,
-            content: fullContent,
-            isLoading: false,
-            fullPath: fileName,
-          };
-        }
-        return msg;
-      })
-    );
-  }
-  break;
-```
-
-#### 5. 处理 tool_end 事件
-
-```typescript
-case "tool_end":
-  if (data.tool === "write") {
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.role === "tool" && msg.toolType === "write") {
-          const size = data.result ? `${data.result.length} bytes` : "0 bytes";
-          return {
-            ...msg,
-            content: data.success
-              ? `${msg.content}\n\n✅ 写入完成！\n📁 文件: ${msg.fullPath || "unknown"}\n📊 大小: ${size}`
-              : `❌ 写入失败\n\n${data.result}`,
-            isLoading: false,
-          };
-        }
-        return msg;
-      })
-    );
-  }
-  break;
-```
-
-## 用户体验
-
-### 完整的显示流程
-
-**阶段1：准备阶段**
 ```
 📝 准备写入文件...
 ```
 
-**阶段2：参数生成阶段**（实时更新）
+然后，随着 LLM 生成参数，实时更新：
+
 ```
 📝 正在生成文件: custom/quick_sort.py...
 📄 内容: def quick_sort(arr):
@@ -224,7 +96,12 @@ case "tool_end":
     ...
 ```
 
-**阶段3：执行阶段**
+用户可以看到文件名和内容的一小部分。
+
+### 阶段 2：完整内容展示（工具执行后）
+
+当工具开始执行时，显示完整的文件内容：
+
 ```
 📝 写入文件: custom/quick_sort.py
 
@@ -246,91 +123,181 @@ def quick_sort(arr):
 ```
 ```
 
-**阶段4：完成阶段**
+虽然工具只用了 1 毫秒，但我们可以把内容完整展示出来。
+
+### 阶段 3：完成状态（确认写入成功）
+
 ```
 ✅ 写入完成！
 📁 文件: custom/quick_sort.py
 📊 大小: 1234 bytes
 ```
 
-### 改进效果
+## 实际效果展示
 
-| 改进点 | 之前 | 之后 |
-|--------|------|------|
-| 等待透明度 | 完全不知道在做什么 | 实时看到文件名和内容 |
-| 内容可见性 | 突然显示完成 | 逐步展示完整内容 |
-| 状态反馈 | 两态（准备/完成） | 四态（准备/生成/执行/完成） |
-| 用户焦虑 | 不知道要等多久 | 可以看到正在生成什么 |
+### 完整的对话流程
 
-## 技术要点
+```
+用户：帮我写快排，py的
 
-### 1. 事件类型理解
+AI：我来帮你写一个 Python 版本的快速排序算法。
 
-- **toolcall_start/end**：LLM 生成工具调用的边界
-- **toolcall_delta**：LLM 增量生成工具参数
-- **tool_execution_start/end**：工具实际执行的边界
+📝 准备写入文件...
+📝 正在生成文件: custom/quick_sort.py...
+📄 内容: def quick_sort(arr):
+    """
+    快速排序算法
+    ...
 
-### 2. 数据结构
+📝 写入文件: custom/quick_sort.py
+
+📄 内容：
+```python
+def quick_sort(arr):
+    """
+    快速排序算法
+
+    参数:
+      arr: 要排序的列表
+
+    返回:
+      排序后的列表
+    """
+    if len(arr) <= 1:
+        return arr
+
+    pivot = arr[len(arr) // 2]
+    ...
+```
+
+✅ 写入完成！
+📁 文件: custom/quick_sort.py
+📊 大小: 3237 bytes
+
+AI：我已经创建了一个完整的 Python 快速排序实现...
+```
+
+## 代码实现（简化版）
+
+### 服务器端做什么
 
 ```typescript
-// toolcall_delta 事件结构
-{
-  type: "toolcall_delta",
-  contentIndex: number,
-  delta: string,                    // JSON 增量
-  partial: {
-    content: [{
-      type: "toolCall",
-      name: "write",
-      arguments: {
-        path: string,
-        content: string
-      }
-    }]
-  }
+// 1. 监听 LLM 生成工具调用的事件
+if (事件类型 === "toolcall_delta") {
+  // 提取正在生成的参数
+  文件路径 = partial.arguments.path
+  文件内容 = partial.arguments.content
+
+  // 发送给前端，实时更新显示
+  发送给前端({
+    type: "tool_call_delta",
+    path: 文件路径,
+    content: 文件内容,
+  });
+}
+
+// 2. 监听工具执行事件
+if (事件类型 === "tool_execution_start") {
+  // 发送完整的参数给前端
+  发送给前端({
+    type: "tool_start",
+    args: event.args,  // 包含完整的文件内容
+  });
 }
 ```
 
-### 3. 状态管理
+### 前端做什么
 
-使用 ref 跟踪当前正在生成的 write 工具：
 ```typescript
-const currentWriteToolRef = useRef<{
-  messageId: string | null;
-  contentIndex: number | null;
-}>({ messageId: null, contentIndex: null });
+// 1. 处理 tool_call_delta（实时更新）
+case "tool_call_delta":
+  更新显示为：
+  `📝 正在生成文件: ${data.path}...
+   📄 内容: ${data.content的前100个字符}...`
+
+// 2. 处理 tool_start（显示完整内容）
+case "tool_start":
+  显示完整内容：
+  `📝 写入文件: ${fileName}
+
+   📄 内容：
+   \`\`\`
+   ${fileContent}
+   \`\`\``
+
+// 3. 处理 tool_end（显示完成状态）
+case "tool_end":
+  追加完成信息：
+  `✅ 写入完成！
+   📁 文件: ${filePath}
+   📊 大小: ${fileSize} bytes`
 ```
 
-### 4. 关键代码位置
+## 改进对比
 
-- **server.ts 第455-479行**：toolcall_delta 事件处理
-- **server.ts 第488-498行**：tool_execution_start 事件处理
-- **chat.tsx 第132-152行**：tool_call_delta 前端处理
-- **chat.tsx 第270-285行**：tool_start 前端处理
-- **chat.tsx 第327-345行**：tool_end 前端处理
+| 方面 | 改进前 | 改进后 |
+|------|--------|--------|
+| 等待时看到什么 | 什么都看不到 | 看到正在生成什么文件 |
+| 内容如何显示 | 突然全部出现 | 逐步展示，先预览后完整 |
+| 状态反馈 | 准备 → 完成（2态） | 准备 → 生成 → 执行 → 完成（4态） |
+| 用户焦虑感 | 高（不知道在干吗） | 低（实时看到进度） |
 
-## 已知限制
+## 关键概念解释
 
-1. **toolcall_delta 的 arguments 可能不完整**
-   - 缓解：只显示可用的部分
-   - 如果 arguments 不可用，跳过阶段1
+### 什么是 toolcall_delta？
 
-2. **大文件显示可能很长**
-   - 可以考虑添加"展开/收起"功能
-   - 或限制显示的行数
+想象你在打字，每打一个字符，屏幕上就显示一个字符。
 
-3. **多工具并发**
-   - 当前实现使用 contentIndex 区分不同工具调用
-   - 可能为每个 write 工具创建独立的消息条目
+`toolcall_delta` 就是这样的效果：
+- LLM 生成工具调用时，不是一次生成完
+- 而是一点一点地生成，像打字一样
+- 每生成一点，就发送一个 `toolcall_delta` 事件
+
+### 为什么 write 工具特殊？
+
+| 工具 | 执行时间 | 能否流式显示 |
+|------|----------|--------------|
+| bash | 200 毫秒 | 可以，执行时流式输出 |
+| write | 1 毫秒 | 太快了，执行时无法流式显示 |
+
+所以 write 工具要在 LLM **生成参数时**就开始显示，而不是等到执行时。
+
+## 小贴士
+
+### 给用户的建议
+
+1. **关注内容预览**
+   - 阶段 1 的内容预览可能不完整
+   - 阶段 2 会显示完整内容
+
+2. **大文件处理**
+   - 如果文件很大，内容会完整显示
+   - 可以使用浏览器的搜索功能查找特定代码
+
+3. **错误处理**
+   - 如果写入失败，会显示错误信息
+   - 可以根据错误提示修正后重试
+
+### 给开发者的建议
+
+1. **事件时机很重要**
+   - `toolcall_start` - LLM 开始生成工具调用
+   - `toolcall_delta` - LLM 增量生成参数
+   - `tool_execution_start` - 工具开始执行
+   - 要选择正确的时机显示正确的状态
+
+2. **状态管理**
+   - 使用 `contentIndex` 区分不同的工具调用
+   - 跟踪当前正在生成的 write 工具
+   - 避免混淆多个并发的工具调用
+
+3. **性能考虑**
+   - 大文件的完整内容可能很长
+   - 考虑添加"展开/收起"功能
+   - 或限制预览的字符数量
 
 ## 相关文件
 
-- `server.ts` - 服务器端事件处理
-- `frontend/chat.tsx` - 前端状态管理和显示逻辑
-- `docs/write-tool-loading-debug.md` - 之前的 loading 状态问题排查
-- `docs/pi-mono-tool-monitoring.md` - pi-mono 工具监听机制分析
-
-## 参考资料
-
-- [pi-mono GitHub](https://github.com/badlogic/pi-mono)
-- [pi-agent-core README](../node_modules/@mariozechner/pi-agent-core/README.md)
+- `server.ts` - 服务器端处理事件
+- `frontend/chat.tsx` - 前端显示内容
+- `docs/write-tool-loading-debug.md` - loading 问题排查（更详细的调试过程）
