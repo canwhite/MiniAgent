@@ -35,11 +35,13 @@ type Message = {
   toolType?: "write" | "other";
   content: string;
   isStreaming?: boolean;
+  isLoading?: boolean;
 };
 
 type WSMessage =
   | { type: "connected"; sessionId: string; message?: string }
   | { type: "text_delta"; delta: string }
+  | { type: "tool_call_start"; tool: string; contentIndex: number }
   | { type: "tool_start"; tool: string; args: any }
   | { type: "tool_end"; tool: string; success: boolean; result: string }
   | { type: "error"; message: string };
@@ -89,6 +91,23 @@ function App() {
             setSessionId(data.sessionId);
             break;
 
+          case "tool_call_start":
+            if (data.tool === "write") {
+              // Show loading message as soon as LLM starts generating the tool call
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "tool",
+                  toolType: "write",
+                  content: `📝 准备写入文件...`,
+                  isStreaming: false,
+                  isLoading: true,
+                },
+              ]);
+            }
+            break;
+
           case "text_delta":
             if (!streamingMessageIdRef.current) {
               // Create new streaming message
@@ -124,18 +143,19 @@ function App() {
 
           case "tool_start":
             if (data.tool === "write") {
-              const content = data.args?.content || "";
               const fileName = data.args?.path || "";
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  role: "tool",
-                  toolType: "write",
-                  content: `📝 写入文件: ${fileName}\n\n${content}`,
-                  isStreaming: false,
-                },
-              ]);
+              // Update the existing loading message with file name
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.role === "tool" && msg.toolType === "write" && msg.isLoading) {
+                    return {
+                      ...msg,
+                      content: `📝 写入文件: ${fileName}\n\n⏳ 正在写入...`,
+                    };
+                  }
+                  return msg;
+                })
+              );
             } else {
               setMessages((prev) => [
                 ...prev,
@@ -151,16 +171,22 @@ function App() {
             break;
 
           case "tool_end":
-            if (data.tool === "write" && data.success) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  role: "tool",
-                  content: `✅ 写入完成`,
-                  isStreaming: false,
-                },
-              ]);
+            if (data.tool === "write") {
+              // Update the last loading write message with actual content
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.role === "tool" && msg.toolType === "write" && msg.isLoading) {
+                    return {
+                      ...msg,
+                      content: data.success
+                        ? `✅ 写入完成\n\n${data.result}`
+                        : `❌ 写入失败\n\n${data.result}`,
+                      isLoading: false,
+                    };
+                  }
+                  return msg;
+                })
+              );
             }
             break;
 
@@ -250,7 +276,7 @@ function App() {
 
       <div class="messages" ref={messagesContainerRef}>
         {messages.map((msg) => (
-          <div class={`message ${msg.role}`} key={msg.id}>
+          <div class={`message ${msg.role} ${msg.isLoading ? "loading" : ""}`} key={msg.id}>
             <div class="avatar">
               {msg.role === "user" ? "U" : msg.role === "tool" ? "T" : "AI"}
             </div>
@@ -259,7 +285,7 @@ function App() {
               dangerouslySetInnerHTML={{
                 __html: msg.role === "tool" && msg.toolType !== "write"
                   ? msg.content.replace(/</g, "&lt;").replace(/>/g, "&gt;")
-                  : formatMessage(msg.content)
+                  : formatMessage(msg.content) + (msg.isLoading ? '<span class="loading-spinner"></span>' : '')
               }}
             />
           </div>

@@ -373,7 +373,21 @@ const server = Bun.serve({
     open(ws) {
       console.log("[WebSocket] 新连接已建立");
       const sessionId = generateSessionId();
-      (ws as any).data = { sessionId };
+      const fs = require("fs");
+
+      // Create write stream for monitor log
+      const logStream = fs.createWriteStream("./monitor.log", { flags: "a" });
+
+      (ws as any).data = { sessionId, logStream };
+
+      const log = (message: string) => {
+        const timestamp = new Date().toISOString();
+        const logMessage = `[${timestamp}] ${message}\n`;
+        console.log(logMessage.trim());
+        logStream.write(logMessage);
+      };
+
+      log(`[SESSION] Session ${sessionId} started, WebSocket opened`);
 
       createSession(sessionId).then((session) => {
         ws.send(
@@ -384,8 +398,11 @@ const server = Bun.serve({
           }),
         );
 
+        log(`[SESSION] Session created successfully`);
+
         session.subscribe((event) => {
-          console.log("--event--", JSON.stringify(event.type, null, 2));
+          log(`[EVENT] Type: ${event.type}`);
+
           if (event.type === "message_update") {
             if (event.assistantMessageEvent.type === "text_delta") {
               ws.send(
@@ -394,10 +411,28 @@ const server = Bun.serve({
                   delta: event.assistantMessageEvent.delta,
                 }),
               );
+            } else if (event.assistantMessageEvent.type === "toolcall_start") {
+              // LLM started generating a tool call - show loading immediately
+              const partial = event.assistantMessageEvent.partial;
+              const toolCall = partial.content?.[event.assistantMessageEvent.contentIndex];
+              if (toolCall && toolCall.type === "toolCall") {
+                log(`[TOOLCALL_START] Tool: ${toolCall.name}, ContentIndex: ${event.assistantMessageEvent.contentIndex}`);
+                ws.send(
+                  JSON.stringify({
+                    type: "tool_call_start",
+                    tool: toolCall.name,
+                    contentIndex: event.assistantMessageEvent.contentIndex,
+                  }),
+                );
+              }
+            } else if (event.assistantMessageEvent.type === "toolcall_end") {
+              // LLM finished generating the tool call
+              log(`[TOOLCALL_END] ContentIndex: ${event.assistantMessageEvent.contentIndex}`);
             } else {
-              console.log("--event--", JSON.stringify(event, null, 2));
+              log(`[MESSAGE_UPDATE] ${JSON.stringify(event.assistantMessageEvent).substring(0, 200)}...`);
             }
           } else if (event.type === "tool_execution_start") {
+            log(`[TOOL_EXECUTION_START] Tool: ${event.toolName}, Args: ${JSON.stringify(event.args).substring(0, 100)}...`);
             ws.send(
               JSON.stringify({
                 type: "tool_start",
@@ -408,6 +443,7 @@ const server = Bun.serve({
           } else if (event.type === "tool_execution_end") {
             const result = event.result;
             const content = result?.content?.[0]?.text || "";
+            log(`[TOOL_EXECUTION_END] Tool: ${event.toolName}, Success: ${!event.isError}, Result length: ${content.length}`);
             ws.send(
               JSON.stringify({
                 type: "tool_end",
@@ -461,7 +497,14 @@ const server = Bun.serve({
     },
     close(ws) {
       const sessionId = (ws as any).data?.sessionId;
+      const logStream = (ws as any).data?.logStream;
       console.log(`[WebSocket] 连接已关闭: ${sessionId}`);
+
+      if (logStream) {
+        logStream.write(`[${new Date().toISOString()}] [SESSION] Session ${sessionId} WebSocket closed\n`);
+        logStream.end();
+      }
+
       if (sessionId) {
         deleteSession(sessionId);
       }
