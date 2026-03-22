@@ -542,11 +542,12 @@ const server = Bun.serve({
         });
       });
     },
-    message(ws, message) {
+    async message(ws, message) {
       try {
         const data = JSON.parse(message.toString()) as {
           type?: string;
           message?: string;
+          sessionId?: string;
         };
         const sessionId = (ws as any).data?.sessionId;
         const session = getSession(sessionId!);
@@ -561,7 +562,59 @@ const server = Bun.serve({
           return;
         }
 
-        if (data.type === "prompt" && typeof data.message === "string") {
+        if (data.type === "switch_session" && data.sessionId) {
+          console.log(`[WebSocket] 切换 session 到: ${data.sessionId}`);
+
+          const sessionMeta = getSessionById(data.sessionId);
+          if (!sessionMeta || !sessionMeta.file_path) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: "Session 不存在或文件路径无效",
+              }),
+            );
+            return;
+          }
+
+          try {
+            const success = await session.switchSession(sessionMeta.file_path);
+            if (success) {
+              // Update sessions Map mapping
+              sessions.set(data.sessionId, session);
+
+              // Remove old sessionId mapping if different
+              if (sessionId && sessionId !== data.sessionId) {
+                sessions.delete(sessionId);
+              }
+
+              // Update the sessionId in ws.data
+              (ws as any).data.sessionId = data.sessionId;
+              (ws as any).data.firstMessageSaved = true; // Existing session, don't save meta again
+
+              ws.send(
+                JSON.stringify({
+                  type: "session_switched",
+                  sessionId: data.sessionId,
+                }),
+              );
+              console.log(`[WebSocket] Session 切换成功: ${data.sessionId}`);
+            } else {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message: "切换 session 失败",
+                }),
+              );
+            }
+          } catch (error: any) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: `切换 session 出错: ${error.message}`,
+              }),
+            );
+          }
+        } else if (data.type === "prompt" && typeof data.message === "string") {
           console.log(`[WebSocket] 收到消息: ${data.message}`);
 
           const firstMessageSaved = (ws as any).data?.firstMessageSaved;

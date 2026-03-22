@@ -1,6 +1,14 @@
 import { Database } from "bun:sqlite";
 import { join } from "path";
 
+export interface SessionMeta {
+  id: string;
+  session_id: string;
+  first_question: string;
+  file_path: string;
+  created_at: number;
+}
+
 const dbPath = join(import.meta.dir, "sessions.db");
 const db = new Database(dbPath);
 
@@ -23,21 +31,21 @@ export function saveSessionMeta(sessionId: string, firstQuestion: string, filePa
   stmt.run(id, sessionId, firstQuestion, filePath, Date.now());
 }
 
-export function getAllSessions() {
+export function getAllSessions(): SessionMeta[] {
   const stmt = db.prepare(`
     SELECT id, session_id, first_question, file_path, created_at
     FROM sessions_meta
     ORDER BY created_at DESC
   `);
-  return stmt.all();
+  return stmt.all() as SessionMeta[];
 }
 
-export function getSessionById(id: string) {
+export function getSessionById(id: string): SessionMeta | undefined {
   const stmt = db.prepare(`
     SELECT id, session_id, first_question, file_path, created_at
     FROM sessions_meta
     WHERE id = ? OR session_id = ?
     LIMIT 1
   `);
-  return stmt.get(id, id);
+  return stmt.get(id, id) as SessionMeta | undefined;
 }

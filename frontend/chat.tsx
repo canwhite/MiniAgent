@@ -43,6 +43,7 @@ type Message = {
 
 type WSMessage =
   | { type: "connected"; sessionId: string; message?: string }
+  | { type: "session_switched"; sessionId: string }
   | { type: "text_delta"; delta: string }
   | { type: "tool_call_delta"; tool: string; path: string; content: string; contentIndex: number }
   | { type: "tool_call_start"; tool: string; contentIndex: number }
@@ -357,7 +358,7 @@ function App() {
     try {
       const res = await fetch(`/api/sessions/${sessionItem.id}`);
       const data = await res.json();
-      
+
       if (data.messages) {
         const loadedMessages: Message[] = data.messages.map((msg: any, idx: number) => ({
           id: `${idx}_${Date.now()}`,
@@ -365,12 +366,16 @@ function App() {
           content: msg.content,
         }));
         setMessages(loadedMessages);
-        setSessionId(data.sessionId);
-        
-        if (wsRef.current) {
-          wsRef.current.close();
+
+        // Send switch session message to backend
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: "switch_session",
+            sessionId: data.sessionId,
+          }));
         }
-        connect();
+
+        setSessionId(data.sessionId);
       }
     } catch (e) {
       console.error("Failed to load session messages:", e);
