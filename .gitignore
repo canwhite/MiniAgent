@@ -8,6 +8,7 @@ dist
 
 ds.sh
 
+*.log
 # code coverage
 coverage
 *.lcov

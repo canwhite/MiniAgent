@@ -12,6 +12,7 @@ import {
 import type { Model } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { join } from "path";
+import { MonitorLogger } from "./lib/logger.js";
 
 const getCurrentTimeTool: ToolDefinition = {
   name: "get_current_time",
@@ -373,21 +374,12 @@ const server = Bun.serve({
     open(ws) {
       console.log("[WebSocket] 新连接已建立");
       const sessionId = generateSessionId();
-      const fs = require("fs");
 
-      // Create write stream for monitor log
-      const logStream = fs.createWriteStream("./monitor.log", { flags: "a" });
+      // Create logger instance
+      const logger = MonitorLogger.createInstance();
+      (ws as any).data = { sessionId, logger };
 
-      (ws as any).data = { sessionId, logStream };
-
-      const log = (message: string) => {
-        const timestamp = new Date().toISOString();
-        const logMessage = `[${timestamp}] ${message}\n`;
-        console.log(logMessage.trim());
-        logStream.write(logMessage);
-      };
-
-      log(`[SESSION] Session ${sessionId} started, WebSocket opened`);
+      logger.log(`[SESSION] Session ${sessionId} started, WebSocket opened`);
 
       createSession(sessionId).then((session) => {
         ws.send(
@@ -398,10 +390,10 @@ const server = Bun.serve({
           }),
         );
 
-        log(`[SESSION] Session created successfully`);
+        logger.log(`[SESSION] Session created successfully`);
 
         session.subscribe((event) => {
-          log(`[EVENT] Type: ${event.type}`);
+          logger.log(`[EVENT] Type: ${event.type}`);
 
           if (event.type === "message_update") {
             if (event.assistantMessageEvent.type === "text_delta") {
@@ -414,9 +406,12 @@ const server = Bun.serve({
             } else if (event.assistantMessageEvent.type === "toolcall_start") {
               // LLM started generating a tool call - show loading immediately
               const partial = event.assistantMessageEvent.partial;
-              const toolCall = partial.content?.[event.assistantMessageEvent.contentIndex];
+              const toolCall =
+                partial.content?.[event.assistantMessageEvent.contentIndex];
               if (toolCall && toolCall.type === "toolCall") {
-                log(`[TOOLCALL_START] Tool: ${toolCall.name}, ContentIndex: ${event.assistantMessageEvent.contentIndex}`);
+                logger.log(
+                  `[TOOLCALL_START] Tool: ${toolCall.name}, ContentIndex: ${event.assistantMessageEvent.contentIndex}`,
+                );
                 ws.send(
                   JSON.stringify({
                     type: "tool_call_start",
@@ -427,12 +422,18 @@ const server = Bun.serve({
               }
             } else if (event.assistantMessageEvent.type === "toolcall_end") {
               // LLM finished generating the tool call
-              log(`[TOOLCALL_END] ContentIndex: ${event.assistantMessageEvent.contentIndex}`);
+              logger.log(
+                `[TOOLCALL_END] ContentIndex: ${event.assistantMessageEvent.contentIndex}`,
+              );
             } else {
-              log(`[MESSAGE_UPDATE] ${JSON.stringify(event.assistantMessageEvent).substring(0, 200)}...`);
+              logger.log(
+                `[MESSAGE_UPDATE] ${JSON.stringify(event.assistantMessageEvent).substring(0, 200)}...`,
+              );
             }
           } else if (event.type === "tool_execution_start") {
-            log(`[TOOL_EXECUTION_START] Tool: ${event.toolName}, Args: ${JSON.stringify(event.args).substring(0, 100)}...`);
+            logger.log(
+              `[TOOL_EXECUTION_START] Tool: ${event.toolName}, Args: ${JSON.stringify(event.args).substring(0, 100)}...`,
+            );
             ws.send(
               JSON.stringify({
                 type: "tool_start",
@@ -443,7 +444,9 @@ const server = Bun.serve({
           } else if (event.type === "tool_execution_end") {
             const result = event.result;
             const content = result?.content?.[0]?.text || "";
-            log(`[TOOL_EXECUTION_END] Tool: ${event.toolName}, Success: ${!event.isError}, Result length: ${content.length}`);
+            logger.log(
+              `[TOOL_EXECUTION_END] Tool: ${event.toolName}, Success: ${!event.isError}, Result length: ${content.length}`,
+            );
             ws.send(
               JSON.stringify({
                 type: "tool_end",
@@ -497,12 +500,12 @@ const server = Bun.serve({
     },
     close(ws) {
       const sessionId = (ws as any).data?.sessionId;
-      const logStream = (ws as any).data?.logStream;
+      const logger = (ws as any).data?.logger;
       console.log(`[WebSocket] 连接已关闭: ${sessionId}`);
 
-      if (logStream) {
-        logStream.write(`[${new Date().toISOString()}] [SESSION] Session ${sessionId} WebSocket closed\n`);
-        logStream.end();
+      if (logger) {
+        logger.log(`[SESSION] Session ${sessionId} WebSocket closed`);
+        logger.close();
       }
 
       if (sessionId) {
