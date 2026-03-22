@@ -99,8 +99,8 @@ async function createSession(sessionId: string) {
     ],
     //自定义工具
     customTools: [getCurrentTimeTool],
-    //现在内容是在memory中存着
-    sessionManager: SessionManager.inMemory(),
+    //会话持久化到根目录的 sessions 文件夹
+    sessionManager: SessionManager.create(cwd, join(cwd, "sessions")),
     resourceLoader: {
       getExtensions: () => ({
         extensions: [],
