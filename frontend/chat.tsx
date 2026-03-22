@@ -214,7 +214,7 @@ function App() {
                   id: crypto.randomUUID(),
                   role: "tool",
                   toolType: "other",
-                  content: `🔧 执行工具: ${data.tool}\n📝 参数: ${JSON.stringify(data.args, null, 2)}`,
+                  content: `🔧 调用工具: ${data.tool}`,
                   isStreaming: false,
                 },
               ]);
@@ -241,6 +241,7 @@ function App() {
                 })
               );
             }
+            // For other tools, don't show the result - the tool_start message is enough
             break;
 
           case "error":
