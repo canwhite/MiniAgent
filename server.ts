@@ -129,6 +129,9 @@ async function createSession(sessionId: string) {
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
 
+  // Create sessionManager first and capture reference
+  const sessionManager = SessionManager.create(cwd, join(cwd, "sessions"));
+
   if (useDeepSeek) {
     authStorage.setRuntimeApiKey("deepseek", apiKey);
   }
@@ -152,10 +155,8 @@ async function createSession(sessionId: string) {
       createWriteTool(join(cwd, "custom")),
       createEditTool(cwd),
     ],
-    //自定义工具
     customTools: [getCurrentTimeTool],
-    //会话持久化到根目录的 sessions 文件夹
-    sessionManager: SessionManager.create(cwd, join(cwd, "sessions")),
+    sessionManager,
     resourceLoader: {
       getExtensions: () => ({
         extensions: [],
@@ -188,10 +189,8 @@ async function createSession(sessionId: string) {
     },
   });
 
-  // Get actual file path from sessionManager
-  const files = readdirSync(sessionsPath);
-  const actualFile = files.find(f => f.endsWith(".jsonl")) || "";
-  const actualFilePath = actualFile ? join(sessionsPath, actualFile) : "";
+  // Wait a bit for the session file to be created (needed for async file creation)
+  // 已移除，改为在发送第一条消息时获取文件路径
 
   sessions.set(sessionId, result.session);
   return { session: result.session };
@@ -271,34 +270,6 @@ async function handleApiMessage(req: Request): Promise<Response> {
       usedSessionId = generateSessionId();
       const result = await createSession(usedSessionId);
       session = result.session;
-      
-      // Get file path by matching timestamp
-      const cwd = process.cwd();
-      const sessionsPath = join(cwd, "sessions");
-      const sessionFiles = readdirSync(sessionsPath);
-      const sessionTsStr = usedSessionId.split("_")[1];
-      const sessionTs = sessionTsStr ? parseInt(sessionTsStr) : 0;
-      
-      let matchedFile = "";
-      let minDiff = Infinity;
-      
-      for (const f of sessionFiles) {
-        if (!f.includes("Z_") || !f.endsWith(".jsonl")) continue;
-        // Parse file timestamp: "2026-03-22T07-57-00-800Z_xxx.jsonl"
-        const tsPart = f.split("Z_")[0];
-        if (!tsPart) continue;
-        const tsClean = tsPart.replace("T", "").replace(/-/g, "");
-        const fileTs = parseInt(tsClean);
-        if (isNaN(fileTs)) continue;
-        const diff = Math.abs(fileTs - sessionTs);
-        if (diff < minDiff) {
-          minDiff = diff;
-          matchedFile = f;
-        }
-      }
-      
-      const sessionFilePath = matchedFile ? join(sessionsPath, matchedFile) : "";
-      saveSessionMeta(usedSessionId, message, sessionFilePath);
     }
 
     const events: any[] = [];
@@ -306,7 +277,15 @@ async function handleApiMessage(req: Request): Promise<Response> {
       events.push(event);
     });
 
+    // Get session file path from PI SDK (created when session is initialized)
+    const sessionFilePath = session.sessionFile;
+
     await session.prompt(message);
+
+    // Only save if this is a new session (no existing sessionId in request)
+    if (!sessionId && sessionFilePath) {
+      saveSessionMeta(usedSessionId, message, sessionFilePath);
+    }
 
     const textResponse = events
       .filter(
@@ -587,31 +566,9 @@ const server = Bun.serve({
 
           const firstMessageSaved = (ws as any).data?.firstMessageSaved;
           if (!firstMessageSaved) {
-            // Get file path by matching timestamp
-            const cwd = process.cwd();
-            const sessionsPath = join(cwd, "sessions");
-            const sessionFiles = readdirSync(sessionsPath);
-            const sessionTs = parseInt(sessionId!.split("_")[1]);
-            
-            let matchedFile = "";
-            let minDiff = Infinity;
-            
-            for (const f of sessionFiles) {
-              if (!f.includes("Z_") || !f.endsWith(".jsonl")) continue;
-              const tsPart = f.split("Z_")[0];
-              if (!tsPart) continue;
-              const tsClean = tsPart.replace("T", "").replace(/-/g, "");
-              const fileTs = parseInt(tsClean);
-              if (isNaN(fileTs)) continue;
-              const diff = Math.abs(fileTs - sessionTs);
-              if (diff < minDiff) {
-                minDiff = diff;
-                matchedFile = f;
-              }
-            }
-            
-            const filePath = matchedFile ? join(sessionsPath, matchedFile) : "";
-            
+            // Get session file path from PI SDK (created when session is initialized)
+            const filePath = session.sessionFile;
+
             if (filePath) {
               saveSessionMeta(sessionId!, data.message, filePath);
               (ws as any).data.firstMessageSaved = true;
