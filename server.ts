@@ -13,6 +13,7 @@ import {
 import type { Model } from "@mariozechner/pi-ai";
 import { join } from "path";
 import { MonitorLogger } from "./lib/logger.js";
+import { saveSessionMeta, getAllSessions } from "./db/index.js";
 import { getCurrentTimeTool } from "./tools/index.js";
 
 const apiKey =
@@ -71,6 +72,8 @@ const sessions = new Map<string, AgentSession>();
 
 async function createSession(sessionId: string) {
   const cwd = process.cwd();
+  const sessionsPath = join(cwd, "sessions");
+  const filePath = join(sessionsPath, `${sessionId}.jsonl`);
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
 
@@ -134,7 +137,7 @@ async function createSession(sessionId: string) {
   });
 
   sessions.set(sessionId, result.session);
-  return result.session;
+  return { session: result.session, filePath };
 }
 
 function getSession(sessionId: string) {
@@ -209,7 +212,9 @@ async function handleApiMessage(req: Request): Promise<Response> {
       }
     } else {
       usedSessionId = generateSessionId();
-      session = await createSession(usedSessionId);
+      const result = await createSession(usedSessionId);
+      session = result.session;
+      saveSessionMeta(usedSessionId, message, result.filePath);
     }
 
     const events: any[] = [];
@@ -289,6 +294,11 @@ const server = Bun.serve({
       return handleCreateSession();
     }
 
+    if (url.pathname === "/api/sessions/list" && req.method === "GET") {
+      const allSessions = getAllSessions();
+      return Response.json({ sessions: allSessions }, { headers: corsHeaders });
+    }
+
     if (url.pathname.startsWith("/api/sessions/") && req.method === "DELETE") {
       const sessionId = url.pathname.split("/").pop()!;
       return handleDeleteSession(sessionId);
@@ -357,7 +367,10 @@ const server = Bun.serve({
 
       logger.log(`[SESSION] Session ${sessionId} started, WebSocket opened`);
 
-      createSession(sessionId).then((session) => {
+      createSession(sessionId).then((result) => {
+        const session = result.session;
+        (ws as any).data.filePath = result.filePath;
+        (ws as any).data.firstMessageSaved = false;
         ws.send(
           JSON.stringify({
             type: "connected",
@@ -479,6 +492,16 @@ const server = Bun.serve({
 
         if (data.type === "prompt" && typeof data.message === "string") {
           console.log(`[WebSocket] 收到消息: ${data.message}`);
+
+          const firstMessageSaved = (ws as any).data?.firstMessageSaved;
+          if (!firstMessageSaved) {
+            const filePath = (ws as any).data?.filePath;
+            if (filePath) {
+              saveSessionMeta(sessionId!, data.message, filePath);
+              (ws as any).data.firstMessageSaved = true;
+            }
+          }
+
           session.prompt(data.message).catch((error) => {
             ws.send(
               JSON.stringify({
