@@ -1,13 +1,13 @@
 """
-Python排序算法实现
+排序算法实现
 包含多种常见的排序算法
 """
 
 def bubble_sort(arr):
     """
     冒泡排序
-    时间复杂度: O(n²)
-    空间复杂度: O(1)
+    时间复杂度：O(n²)
+    空间复杂度：O(1)
     """
     n = len(arr)
     for i in range(n):
@@ -26,8 +26,8 @@ def bubble_sort(arr):
 def selection_sort(arr):
     """
     选择排序
-    时间复杂度: O(n²)
-    空间复杂度: O(1)
+    时间复杂度：O(n²)
+    空间复杂度：O(1)
     """
     n = len(arr)
     for i in range(n):
@@ -44,13 +44,13 @@ def selection_sort(arr):
 def insertion_sort(arr):
     """
     插入排序
-    时间复杂度: O(n²)
-    空间复杂度: O(1)
+    时间复杂度：O(n²)
+    空间复杂度：O(1)
     """
     for i in range(1, len(arr)):
         key = arr[i]
         j = i - 1
-        # 将大于key的元素向后移动
+        # 将比key大的元素向右移动
         while j >= 0 and key < arr[j]:
             arr[j + 1] = arr[j]
             j -= 1
@@ -61,29 +61,27 @@ def insertion_sort(arr):
 def merge_sort(arr):
     """
     归并排序
-    时间复杂度: O(n log n)
-    空间复杂度: O(n)
+    时间复杂度：O(n log n)
+    空间复杂度：O(n)
     """
     if len(arr) <= 1:
         return arr
     
     # 分割数组
     mid = len(arr) // 2
-    left = arr[:mid]
-    right = arr[mid:]
+    left_half = arr[:mid]
+    right_half = arr[mid:]
     
     # 递归排序
-    left = merge_sort(left)
-    right = merge_sort(right)
+    left_half = merge_sort(left_half)
+    right_half = merge_sort(right_half)
     
     # 合并
-    return merge(left, right)
+    return merge(left_half, right_half)
 
 
 def merge(left, right):
-    """
-    合并两个已排序的数组
-    """
+    """合并两个已排序的数组"""
     result = []
     i = j = 0
     
@@ -105,39 +103,42 @@ def merge(left, right):
 def quick_sort(arr):
     """
     快速排序
-    时间复杂度: O(n log n) 平均, O(n²) 最坏
-    空间复杂度: O(log n)
+    时间复杂度：O(n log n) 平均，O(n²) 最坏
+    空间复杂度：O(log n)
     """
     if len(arr) <= 1:
         return arr
     
     # 选择基准元素
     pivot = arr[len(arr) // 2]
+    
+    # 分割数组
     left = [x for x in arr if x < pivot]
     middle = [x for x in arr if x == pivot]
     right = [x for x in arr if x > pivot]
     
-    # 递归排序左右部分
+    # 递归排序并合并
     return quick_sort(left) + middle + quick_sort(right)
 
 
 def heap_sort(arr):
     """
     堆排序
-    时间复杂度: O(n log n)
-    空间复杂度: O(1)
+    时间复杂度：O(n log n)
+    空间复杂度：O(1)
     """
     def heapify(arr, n, i):
+        """构建最大堆"""
         largest = i
         left = 2 * i + 1
         right = 2 * i + 2
         
         if left < n and arr[left] > arr[largest]:
             largest = left
-            
+        
         if right < n and arr[right] > arr[largest]:
             largest = right
-            
+        
         if largest != i:
             arr[i], arr[largest] = arr[largest], arr[i]
             heapify(arr, n, largest)
@@ -150,7 +151,7 @@ def heap_sort(arr):
     
     # 逐个提取元素
     for i in range(n - 1, 0, -1):
-        arr[i], arr[0] = arr[0], arr[i]
+        arr[i], arr[0] = arr[0], arr[i]  # 交换
         heapify(arr, i, 0)
     
     return arr
@@ -158,9 +159,9 @@ def heap_sort(arr):
 
 def counting_sort(arr):
     """
-    计数排序（适用于整数）
-    时间复杂度: O(n + k)
-    空间复杂度: O(k)
+    计数排序（适用于整数且范围较小的情况）
+    时间复杂度：O(n + k)，k是数值范围
+    空间复杂度：O(k)
     """
     if not arr:
         return arr
@@ -173,7 +174,7 @@ def counting_sort(arr):
     count_size = max_val - min_val + 1
     count = [0] * count_size
     
-    # 计数每个元素出现的次数
+    # 计数
     for num in arr:
         count[num - min_val] += 1
     
@@ -185,102 +186,6 @@ def counting_sort(arr):
     return sorted_arr
 
 
-def radix_sort(arr):
-    """
-    基数排序（适用于非负整数）
-    时间复杂度: O(d * (n + k))
-    空间复杂度: O(n + k)
-    """
-    if not arr:
-        return arr
-    
-    # 找到最大数确定位数
-    max_num = max(arr)
-    exp = 1
-    
-    while max_num // exp > 0:
-        # 使用计数排序对每个位进行排序
-        output = [0] * len(arr)
-        count = [0] * 10
-        
-        # 计数每个数字出现的次数
-        for num in arr:
-            index = (num // exp) % 10
-            count[index] += 1
-        
-        # 计算累积计数
-        for i in range(1, 10):
-            count[i] += count[i - 1]
-        
-        # 构建输出数组
-        for i in range(len(arr) - 1, -1, -1):
-            index = (arr[i] // exp) % 10
-            output[count[index] - 1] = arr[i]
-            count[index] -= 1
-        
-        # 复制回原数组
-        for i in range(len(arr)):
-            arr[i] = output[i]
-        
-        exp *= 10
-    
-    return arr
-
-
-def shell_sort(arr):
-    """
-    希尔排序
-    时间复杂度: O(n log² n) 到 O(n²)
-    空间复杂度: O(1)
-    """
-    n = len(arr)
-    gap = n // 2
-    
-    while gap > 0:
-        for i in range(gap, n):
-            temp = arr[i]
-            j = i
-            while j >= gap and arr[j - gap] > temp:
-                arr[j] = arr[j - gap]
-                j -= gap
-            arr[j] = temp
-        gap //= 2
-    
-    return arr
-
-
-def bucket_sort(arr):
-    """
-    桶排序
-    时间复杂度: O(n + k) 平均
-    空间复杂度: O(n + k)
-    """
-    if not arr:
-        return arr
-    
-    # 确定桶的数量
-    n = len(arr)
-    max_val = max(arr)
-    min_val = min(arr)
-    
-    # 创建桶
-    bucket_count = min(n, 10)  # 使用10个桶或更少
-    buckets = [[] for _ in range(bucket_count)]
-    
-    # 将元素分配到桶中
-    for num in arr:
-        index = min(bucket_count - 1, int((num - min_val) * bucket_count / (max_val - min_val + 1)))
-        buckets[index].append(num)
-    
-    # 对每个桶进行排序并合并
-    sorted_arr = []
-    for bucket in buckets:
-        sorted_arr.extend(sorted(bucket))
-    
-    return sorted_arr
-
-
-# 测试函数
 def test_sorting_algorithms():
     """测试所有排序算法"""
     test_cases = [
@@ -300,24 +205,51 @@ def test_sorting_algorithms():
         ("快速排序", quick_sort),
         ("堆排序", heap_sort),
         ("计数排序", counting_sort),
-        ("基数排序", radix_sort),
-        ("希尔排序", shell_sort),
-        ("桶排序", bucket_sort),
     ]
     
-    for test_case in test_cases:
-        print(f"\n测试数组: {test_case}")
+    for i, test_arr in enumerate(test_cases):
+        print(f"\n测试用例 {i+1}: {test_arr}")
+        original = test_arr.copy()
+        
         for name, func in algorithms:
+            # 计数排序只适用于整数
+            if name == "计数排序" and test_arr and not all(isinstance(x, int) for x in test_arr):
+                continue
+                
+            arr_copy = test_arr.copy()
             try:
-                # 创建副本以避免修改原数组
-                arr_copy = test_case.copy()
-                sorted_arr = func(arr_copy.copy())
-                print(f"{name}: {sorted_arr}")
+                sorted_arr = func(arr_copy)
+                print(f"  {name}: {sorted_arr}")
             except Exception as e:
-                print(f"{name}: 错误 - {e}")
+                print(f"  {name}: 错误 - {e}")
 
 
 if __name__ == "__main__":
-    print("Python排序算法实现")
+    print("排序算法测试")
     print("=" * 50)
     test_sorting_algorithms()
+    
+    # 性能比较示例
+    print("\n" + "=" * 50)
+    print("性能比较示例（随机数组）:")
+    
+    import random
+    import time
+    
+    random_arr = [random.randint(1, 1000) for _ in range(100)]
+    
+    algorithms = [
+        ("冒泡排序", bubble_sort),
+        ("选择排序", selection_sort),
+        ("插入排序", insertion_sort),
+        ("归并排序", merge_sort),
+        ("快速排序", quick_sort),
+        ("堆排序", heap_sort),
+    ]
+    
+    for name, func in algorithms:
+        arr_copy = random_arr.copy()
+        start_time = time.time()
+        func(arr_copy)
+        end_time = time.time()
+        print(f"  {name}: {end_time - start_time:.6f} 秒")

@@ -420,6 +420,29 @@ const server = Bun.serve({
                   }),
                 );
               }
+            } else if (event.assistantMessageEvent.type === "toolcall_delta") {
+              // Tool call arguments are being streamed - send incremental updates for write tool
+              const partial = event.assistantMessageEvent.partial;
+              const toolCall =
+                partial.content?.[event.assistantMessageEvent.contentIndex];
+              if (toolCall?.type === "toolCall" && toolCall.name === "write") {
+                const args = (toolCall.arguments || {}) as {
+                  path?: string;
+                  content?: string;
+                };
+                logger.log(
+                  `[TOOLCALL_DELTA] Tool: write, Path: ${args.path || "(generating)"}, Content length: ${args.content?.length || 0}`,
+                );
+                ws.send(
+                  JSON.stringify({
+                    type: "tool_call_delta",
+                    tool: "write",
+                    path: args.path || "",
+                    content: args.content || "",
+                    contentIndex: event.assistantMessageEvent.contentIndex,
+                  }),
+                );
+              }
             } else if (event.assistantMessageEvent.type === "toolcall_end") {
               // LLM finished generating the tool call
               logger.log(

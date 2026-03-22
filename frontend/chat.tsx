@@ -36,11 +36,15 @@ type Message = {
   content: string;
   isStreaming?: boolean;
   isLoading?: boolean;
+  isTyping?: boolean; // 打字机效果状态
+  fullPath?: string; // 完整文件路径
+  contentIndex?: number; // 用于追踪工具调用
 };
 
 type WSMessage =
   | { type: "connected"; sessionId: string; message?: string }
   | { type: "text_delta"; delta: string }
+  | { type: "tool_call_delta"; tool: string; path: string; content: string; contentIndex: number }
   | { type: "tool_call_start"; tool: string; contentIndex: number }
   | { type: "tool_start"; tool: string; args: any }
   | { type: "tool_end"; tool: string; success: boolean; result: string }
@@ -71,6 +75,10 @@ function App() {
   const streamingMessageIdRef = useRef<string | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const currentWriteToolRef = useRef<{ messageId: string | null; contentIndex: number | null }>({
+    messageId: null,
+    contentIndex: null,
+  });
 
   const connect = useCallback(() => {
     setIsConnecting(true);
@@ -91,18 +99,50 @@ function App() {
             setSessionId(data.sessionId);
             break;
 
+          case "tool_call_delta":
+            if (data.tool === "write") {
+              // Update the existing loading message with incremental content
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (
+                    msg.role === "tool" &&
+                    msg.toolType === "write" &&
+                    msg.isLoading &&
+                    msg.contentIndex === data.contentIndex
+                  ) {
+                    const preview = data.content
+                      ? data.content.substring(0, 100).replace(/\n/g, "\\n")
+                      : "";
+                    return {
+                      ...msg,
+                      content: `📝 正在生成文件${data.path ? `: ${data.path}` : ""}...\n📄 内容: ${preview}${data.content && data.content.length > 100 ? "..." : ""}`,
+                      fullPath: data.path,
+                    };
+                  }
+                  return msg;
+                })
+              );
+            }
+            break;
+
           case "tool_call_start":
             if (data.tool === "write") {
+              const newId = crypto.randomUUID();
+              currentWriteToolRef.current = {
+                messageId: newId,
+                contentIndex: data.contentIndex,
+              };
               // Show loading message as soon as LLM starts generating the tool call
               setMessages((prev) => [
                 ...prev,
                 {
-                  id: crypto.randomUUID(),
+                  id: newId,
                   role: "tool",
                   toolType: "write",
                   content: `📝 准备写入文件...`,
                   isStreaming: false,
                   isLoading: true,
+                  contentIndex: data.contentIndex,
                 },
               ]);
             }
@@ -144,13 +184,19 @@ function App() {
           case "tool_start":
             if (data.tool === "write") {
               const fileName = data.args?.path || "";
-              // Update the existing loading message with file name
+              const fileContent = data.args?.content || "";
+              // Update the existing loading message and start typing effect
               setMessages((prev) =>
                 prev.map((msg) => {
                   if (msg.role === "tool" && msg.toolType === "write" && msg.isLoading) {
+                    // Prepare full content with typing effect
+                    const fullContent = `📝 写入文件: ${fileName}\n\n📄 内容：\n\`\`\`\n${fileContent}\n\`\`\``;
                     return {
                       ...msg,
-                      content: `📝 写入文件: ${fileName}\n\n⏳ 正在写入...`,
+                      content: fullContent,
+                      isLoading: false,
+                      isTyping: false, // 暂时禁用打字机动画，直接显示完整内容
+                      fullPath: fileName,
                     };
                   }
                   return msg;
@@ -172,16 +218,18 @@ function App() {
 
           case "tool_end":
             if (data.tool === "write") {
-              // Update the last loading write message with actual content
+              // Update the write message with completion status
               setMessages((prev) =>
                 prev.map((msg) => {
-                  if (msg.role === "tool" && msg.toolType === "write" && msg.isLoading) {
+                  if (msg.role === "tool" && msg.toolType === "write") {
+                    const size = data.result ? `${data.result.length} bytes` : "0 bytes";
                     return {
                       ...msg,
                       content: data.success
-                        ? `✅ 写入完成\n\n${data.result}`
+                        ? `${msg.content}\n\n✅ 写入完成！\n📁 文件: ${msg.fullPath || "unknown"}\n📊 大小: ${size}`
                         : `❌ 写入失败\n\n${data.result}`,
                       isLoading: false,
+                      isTyping: false,
                     };
                   }
                   return msg;
