@@ -78,6 +78,7 @@ function App() {
   const streamingMessageIdRef = useRef<string | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const currentWriteToolRef = useRef<{ messageId: string | null; contentIndex: number | null }>({
     messageId: null,
     contentIndex: null,
@@ -283,6 +284,22 @@ function App() {
     }
   }, [messages]);
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowHistory(false);
+      }
+    };
+
+    if (showHistory) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showHistory]);
+
   const sendMessage = () => {
     const messageText = input.trim();
     if (!messageText || !wsRef.current || !isConnected) return;
@@ -382,9 +399,9 @@ function App() {
         <div class={`status-dot ${statusClass}`} />
         <h1>MiniAgent Chat</h1>
         {sessionId && <span class="session-id">{sessionId}</span>}
-        <button class="history-btn" onClick={toggleHistory}>📜</button>
+        <button class="history-btn" onClick={toggleHistory}>history</button>
         {showHistory && (
-          <div class="history-dropdown">
+          <div class="history-dropdown" ref={dropdownRef}>
             <div class="history-dropdown-header">History</div>
             {isLoadingSession ? (
               <div class="history-dropdown-loading">Loading...</div>
