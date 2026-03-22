@@ -33,6 +33,9 @@ type Message = {
   id: string;
   role: "user" | "assistant" | "tool";
   toolType?: "write" | "other";
+  toolName?: string; // 工具名称
+  toolArgs?: any; // 工具参数
+  toolResult?: string; // 工具执行结果
   content: string;
   isStreaming?: boolean;
   isLoading?: boolean;
@@ -50,6 +53,42 @@ type WSMessage =
   | { type: "tool_start"; tool: string; args: any }
   | { type: "tool_end"; tool: string; success: boolean; result: string }
   | { type: "error"; message: string };
+
+function formatToolCard(toolName: string, args: any, result: string | null): string {
+  let card = `🔧 **${toolName}**\n\n`;
+
+  // Display arguments based on tool type
+  if (toolName === "bash") {
+    card += `**Command:** \`${args.command}\`\n`;
+  } else if (toolName === "read") {
+    card += `**File:** \`${args.file_path}\`\n`;
+  } else if (toolName === "edit") {
+    card += `**File:** \`${args.file_path}\`\n`;
+  } else if (toolName === "grep") {
+    card += `**Pattern:** \`${args.pattern}\`\n`;
+    if (args.path) card += `**Path:** \`${args.path}\`\n`;
+  } else if (toolName === "glob") {
+    card += `**Pattern:** \`${args.pattern}\`\n`;
+    if (args.path) card += `**Path:** \`${args.path}\`\n`;
+  } else {
+    // Generic - show all args
+    card += `**Args:**\n\`\`\`json\n${JSON.stringify(args, null, 2)}\n\`\`\`\n`;
+  }
+
+  // Add result if available
+  if (result) {
+    // Truncate result if too long (except for edit and write)
+    const maxResultLength = 500;
+    const truncatedResult = result.length > maxResultLength
+      ? result.substring(0, maxResultLength) + `\n... (${result.length - maxResultLength} more characters)`
+      : result;
+    card += `\n**Result:**\n\`\`\`\n${truncatedResult}\n\`\`\``;
+  } else {
+    card += `\n⏳ *Running...*`;
+  }
+
+  return card;
+}
 
 function formatMessage(content: string): string {
   // First escape HTML to prevent XSS
@@ -214,7 +253,10 @@ function App() {
                   id: crypto.randomUUID(),
                   role: "tool",
                   toolType: "other",
-                  content: `🔧 调用工具: ${data.tool}`,
+                  toolName: data.tool,
+                  toolArgs: data.args,
+                  content: formatToolCard(data.tool, data.args, null),
+                  isLoading: true,
                   isStreaming: false,
                 },
               ]);
@@ -240,8 +282,22 @@ function App() {
                   return msg;
                 })
               );
+            } else {
+              // Update other tool messages with the result
+              setMessages((prev) =>
+                prev.map((msg) => {
+                  if (msg.role === "tool" && msg.toolType === "other" && msg.toolName === data.tool && msg.isLoading) {
+                    return {
+                      ...msg,
+                      content: formatToolCard(data.tool, msg.toolArgs, data.result),
+                      toolResult: data.result,
+                      isLoading: false,
+                    };
+                  }
+                  return msg;
+                })
+              );
             }
-            // For other tools, don't show the result - the tool_start message is enough
             break;
 
           case "error":
