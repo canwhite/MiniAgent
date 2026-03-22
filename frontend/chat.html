@@ -74,20 +74,24 @@
     }
 
     .header .history-btn {
-      background: transparent;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       border: none;
       font-size: 0.85rem;
       cursor: pointer;
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      transition: background 0.2s;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      transition: opacity 0.2s, transform 0.1s;
       margin-left: 0.5rem;
-      text-decoration: underline;
-      color: #888;
+      color: white;
+      font-weight: 500;
     }
 
     .header .history-btn:hover {
-      background: rgba(255, 255, 255, 0.1);
+      opacity: 0.9;
+    }
+
+    .header .history-btn:active {
+      transform: scale(0.98);
     }
 
     .header {
@@ -480,20 +484,19 @@
       align-self: center;
       margin-top: 0.5rem;
       background: transparent;
-      border: 1px solid #333;
-      border-radius: 4px;
-      padding: 0.3rem 1rem;
-      color: #555;
-      font-size: 0.75rem;
+      border: 1px solid #667eea;
+      border-radius: 8px;
+      padding: 0.5rem 1rem;
+      color: #667eea;
+      font-size: 0.85rem;
       cursor: pointer;
       transition: all 0.2s;
-      opacity: 0.7;
+      opacity: 1;
     }
 
     .clear-btn:hover {
+      background: rgba(102, 126, 234, 0.1);
       opacity: 1;
-      border-color: #667eea;
-      color: #667eea;
     }
 
     .clear-btn:disabled {
