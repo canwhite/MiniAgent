@@ -449,7 +449,7 @@ function App() {
             />
           </div>
         ))}
-        {messages.length > 0 && (
+        {messages.some(m => m.role === 'assistant') && (
           <button class="clear-btn" onClick={clearChat}>🧹 Clear</button>
         )}
       </div>
