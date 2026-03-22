@@ -387,6 +387,39 @@
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
+
+    .clear-area {
+      padding: 0.75rem;
+      display: flex;
+      justify-content: center;
+      background: #16213e;
+      border-top: 1px solid #0f3460;
+    }
+
+    .clear-btn {
+      align-self: center;
+      margin-top: 0.5rem;
+      background: transparent;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 0.3rem 1rem;
+      color: #555;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      opacity: 0.7;
+    }
+
+    .clear-btn:hover {
+      opacity: 1;
+      border-color: #667eea;
+      color: #667eea;
+    }
+
+    .clear-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>

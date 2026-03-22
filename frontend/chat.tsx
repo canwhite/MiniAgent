@@ -312,6 +312,16 @@ function App() {
     }
   };
 
+  const clearChat = () => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    setMessages([]);
+    setSessionId("");
+    streamingMessageIdRef.current = null;
+    connect();
+  };
+
   const statusClass = isConnected ? "connected" : isConnecting ? "connecting" : "error";
 
   return (
@@ -338,6 +348,9 @@ function App() {
             />
           </div>
         ))}
+        {messages.length > 0 && (
+          <button class="clear-btn" onClick={clearChat}>Clear</button>
+        )}
       </div>
 
       <div class="input-area">
