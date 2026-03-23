@@ -175,6 +175,16 @@ async function createSession(sessionId: string) {
             source: "inline",
             disableModelInvocation: false,
           },
+          {
+            name: "diffusion-narrative-denouncing",
+            description:
+              "基于扩散模型叙事去噪流的小说写作 SOP。通过锁定全局信号、预测叙事噪声、精准去噪、随机修正四个步骤，解决 AI 翻译腔、逻辑断层和故事平淡的问题。",
+            filePath:
+              "/Users/zack/Desktop/MiniAgent/skills/diffusion-narrative-denouncing/SKILL.md",
+            baseDir: "/Users/zack/Desktop/MiniAgent/skills/diffusion-narrative-denouncing",
+            source: "inline",
+            disableModelInvocation: false,
+          },
         ],
         diagnostics: [],
       }),
