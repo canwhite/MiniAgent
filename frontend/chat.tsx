@@ -113,6 +113,7 @@ function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState<any[]>([]);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
+  const [userScrolled, setUserScrolled] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
@@ -123,6 +124,7 @@ function App() {
     messageId: null,
     contentIndex: null,
   });
+  const lastScrollTopRef = useRef<number>(0);
 
   const connect = useCallback(() => {
     setIsConnecting(true);
@@ -338,9 +340,39 @@ function App() {
   useEffect(() => {
     if (messagesContainerRef.current) {
       const container = messagesContainerRef.current;
+
+      // Track user scrolling
+      const handleScroll = () => {
+        const currentScrollTop = container.scrollTop;
+        const scrollHeight = container.scrollHeight;
+        const clientHeight = container.clientHeight;
+        const distanceFromBottom = scrollHeight - currentScrollTop - clientHeight;
+
+        // User is scrolling up or not at bottom
+        if (currentScrollTop < lastScrollTopRef.current || distanceFromBottom > 100) {
+          setUserScrolled(true);
+        } else if (distanceFromBottom < 50) {
+          // User scrolled back near bottom
+          setUserScrolled(false);
+        }
+
+        lastScrollTopRef.current = currentScrollTop <= 0 ? 0 : currentScrollTop;
+      };
+
+      container.addEventListener("scroll", handleScroll);
+
+      return () => {
+        container.removeEventListener("scroll", handleScroll);
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    if (messagesContainerRef.current && !userScrolled) {
+      const container = messagesContainerRef.current;
       container.scrollTop = container.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, userScrolled]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -361,6 +393,9 @@ function App() {
   const sendMessage = () => {
     const messageText = input.trim();
     if (!messageText || !wsRef.current || !isConnected) return;
+
+    // Reset user scroll state when sending a new message
+    setUserScrolled(false);
 
     setMessages((prev) => [
       ...prev,
