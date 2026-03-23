@@ -118,14 +118,24 @@
     }
 
     .history-dropdown-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       padding: 0.75rem;
-      cursor: pointer;
       border-bottom: 1px solid rgba(15, 52, 96, 0.5);
       transition: background 0.2s;
     }
 
-    .history-dropdown-item:hover {
+    .history-item-content {
+      flex: 1;
+      cursor: pointer;
+      margin-right: 0.5rem;
+    }
+
+    .history-dropdown-item:hover .history-item-content {
       background: rgba(102, 126, 234, 0.1);
+      margin: -0.75rem;
+      padding: 0.75rem;
     }
 
     .history-dropdown-item:last-child {
@@ -144,6 +154,20 @@
       font-size: 0.7rem;
       color: #666;
       margin-top: 0.25rem;
+    }
+
+    .history-delete-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+      opacity: 0.4;
+      transition: opacity 0.2s;
+      font-size: 0.9rem;
+    }
+
+    .history-delete-btn:hover {
+      opacity: 1;
     }
 
     .history-dropdown-loading,

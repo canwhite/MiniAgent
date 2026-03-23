@@ -488,6 +488,26 @@ function App() {
     return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
   };
 
+  const deleteSession = async (sessionIdToDelete: string, e: Event) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch(`/api/sessions/${sessionIdToDelete}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        // Refresh sessions list
+        loadSessions();
+        // If deleted current session, clear chat
+        if (sessionIdToDelete === sessionId) {
+          setMessages([]);
+          setSessionId("");
+        }
+      }
+    } catch (e) {
+      console.error("Failed to delete session:", e);
+    }
+  };
+
   const statusClass = isConnected ? "connected" : isConnecting ? "connecting" : "error";
 
   return (
@@ -509,14 +529,22 @@ function App() {
                 <div
                   class="history-dropdown-item"
                   key={s.id}
-                  onClick={() => loadSessionMessages(s)}
                 >
-                  <div class="history-item-question">
-                    {s.first_question.length > 30 
-                      ? s.first_question.substring(0, 30) + "..." 
-                      : s.first_question}
+                  <div class="history-item-content" onClick={() => loadSessionMessages(s)}>
+                    <div class="history-item-question">
+                      {s.first_question.length > 30
+                        ? s.first_question.substring(0, 30) + "..."
+                        : s.first_question}
+                    </div>
+                    <div class="history-item-time">{formatTime(s.created_at)}</div>
                   </div>
-                  <div class="history-item-time">{formatTime(s.created_at)}</div>
+                  <button
+                    class="history-delete-btn"
+                    onClick={(e) => deleteSession(s.session_id, e)}
+                    title="删除此会话"
+                  >
+                    🗑️
+                  </button>
                 </div>
               ))
             )}

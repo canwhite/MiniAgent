@@ -49,3 +49,14 @@ export function getSessionById(id: string): SessionMeta | undefined {
   `);
   return stmt.get(id, id) as SessionMeta | undefined;
 }
+
+export function deleteSessionFromDb(sessionId: string): boolean {
+  try {
+    const stmt = db.prepare('DELETE FROM sessions_meta WHERE session_id = ?');
+    const result = stmt.run(sessionId);
+    return result.changes > 0;
+  } catch (error) {
+    console.error('Failed to delete session from database:', error);
+    return false;
+  }
+}

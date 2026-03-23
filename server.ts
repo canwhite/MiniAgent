@@ -13,9 +13,9 @@ import {
 import type { Model } from "@mariozechner/pi-ai";
 import { join } from "path";
 import { MonitorLogger } from "./lib/logger.js";
-import { saveSessionMeta, getAllSessions, getSessionById } from "./db/index.js";
+import { saveSessionMeta, getAllSessions, getSessionById, deleteSessionFromDb } from "./db/index.js";
 import { getCurrentTimeTool } from "./tools/index.js";
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "fs";
 
 const apiKey =
   process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY || "";
@@ -331,15 +331,35 @@ async function handleCreateSession(): Promise<Response> {
 }
 
 function handleDeleteSession(sessionId: string): Response {
-  const session = getSession(sessionId);
-  if (!session) {
-    return Response.json(
-      { error: "Session 不存在" },
-      { status: 404, headers: corsHeaders },
-    );
+  // Get session metadata to find file path
+  const sessionMeta = getSessionById(sessionId);
+
+  // Delete session file if it exists
+  if (sessionMeta && sessionMeta.file_path) {
+    try {
+      unlinkSync(sessionMeta.file_path);
+      console.log(`[DELETE] Deleted session file: ${sessionMeta.file_path}`);
+    } catch (error: any) {
+      console.error(`[DELETE] Failed to delete session file: ${error.message}`);
+    }
   }
-  deleteSession(sessionId);
-  return Response.json({ message: "Session 已删除" }, { headers: corsHeaders });
+
+  // Delete from database
+  const dbDeleted = deleteSessionFromDb(sessionId);
+  if (dbDeleted) {
+    console.log(`[DELETE] Deleted session from database: ${sessionId}`);
+  }
+
+  // Clean up in-memory session if it exists
+  const session = getSession(sessionId);
+  if (session) {
+    deleteSession(sessionId);
+  }
+
+  return Response.json(
+    { message: "Session 已完全删除" },
+    { headers: corsHeaders },
+  );
 }
 
 const server = Bun.serve({
