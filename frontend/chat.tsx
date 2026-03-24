@@ -52,6 +52,8 @@ type WSMessage =
   | { type: "tool_call_start"; tool: string; contentIndex: number }
   | { type: "tool_start"; tool: string; args: any }
   | { type: "tool_end"; tool: string; success: boolean; result: string }
+  | { type: "response_start" }
+  | { type: "response_end" }
   | { type: "error"; message: string };
 
 function formatToolCard(toolName: string, args: any, result: string | null): string {
@@ -114,6 +116,7 @@ function App() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [userScrolled, setUserScrolled] = useState(false);
+  const [isResponding, setIsResponding] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
@@ -143,6 +146,18 @@ function App() {
           case "connected":
             setIsConnected(true);
             setSessionId(data.sessionId);
+            break;
+
+          case "response_start":
+            setIsResponding(true);
+            break;
+
+          case "response_end":
+            setIsResponding(false);
+            streamingMessageIdRef.current = null;
+            setMessages((prev) =>
+              prev.map((msg) => ({ ...msg, isStreaming: false })),
+            );
             break;
 
           case "tool_call_delta":
@@ -213,18 +228,6 @@ function App() {
                 ),
               );
             }
-
-            // Reset completion timer
-            if (typingTimeoutRef.current) {
-              clearTimeout(typingTimeoutRef.current);
-            }
-            typingTimeoutRef.current = setTimeout(() => {
-              // Mark streaming as complete
-              streamingMessageIdRef.current = null;
-              setMessages((prev) =>
-                prev.map((msg) => ({ ...msg, isStreaming: false })),
-              );
-            }, 1000);
             break;
 
           case "tool_start":
@@ -418,6 +421,16 @@ function App() {
     );
   };
 
+  const handleStopClick = () => {
+    if (isResponding && wsRef.current) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: "stop",
+        }),
+      );
+    }
+  };
+
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -584,10 +597,11 @@ function App() {
             disabled={!isConnected}
           />
           <button
-            onClick={sendMessage}
-            disabled={!isConnected || !input.trim()}
+            onClick={isResponding ? handleStopClick : sendMessage}
+            disabled={isResponding ? false : (!isConnected || !input.trim())}
+            class={isResponding ? "stop-btn" : ""}
           >
-            发送
+            {isResponding ? "停止" : "发送"}
           </button>
         </div>
       </div>

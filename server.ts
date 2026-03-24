@@ -492,10 +492,21 @@ const server = Bun.serve({
 
         logger.log(`[SESSION] Session created successfully`);
 
+        // Send response_start when AI starts responding
+        let hasSentResponseStart = false;
+
         session.subscribe((event) => {
           logger.log(`[EVENT] Type: ${event.type}`);
 
           if (event.type === "message_update") {
+            if (!hasSentResponseStart) {
+              hasSentResponseStart = true;
+              ws.send(
+                JSON.stringify({
+                  type: "response_start",
+                }),
+              );
+            }
             if (event.assistantMessageEvent.type === "text_delta") {
               ws.send(
                 JSON.stringify({
@@ -578,6 +589,13 @@ const server = Bun.serve({
                 result: content,
               }),
             );
+          } else if (event.type === "message_end") {
+            hasSentResponseStart = false;
+            ws.send(
+              JSON.stringify({
+                type: "response_end",
+              }),
+            );
           }
         });
       });
@@ -599,6 +617,15 @@ const server = Bun.serve({
               message: "Session 不存在",
             }),
           );
+          return;
+        }
+
+        if (data.type === "stop") {
+          console.log(`[WebSocket] 收到停止请求`);
+          if (session.isStreaming) {
+            await session.abort();
+            console.log(`[WebSocket] 已停止 AI 回复`);
+          }
           return;
         }
 
