@@ -54,6 +54,7 @@ type WSMessage =
   | { type: "tool_end"; tool: string; success: boolean; result: string }
   | { type: "response_start" }
   | { type: "response_end" }
+  | { type: "auth_success" }
   | { type: "error"; message: string };
 
 function formatToolCard(toolName: string, args: any, result: string | null): string {
@@ -117,6 +118,8 @@ function App() {
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [userScrolled, setUserScrolled] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [apiToken, setApiToken] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
@@ -129,13 +132,15 @@ function App() {
   });
   const lastScrollTopRef = useRef<number>(0);
 
-  const connect = useCallback(() => {
+  const connect = useCallback((retryCount = 0) => {
     setIsConnecting(true);
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
     ws.onopen = () => {
-      setIsConnecting(false);
+      // 连接建立后，发送认证请求（服务器会通过 Cookie 验证）
+      console.log("WebSocket 已连接，发送认证请求");
+      ws.send(JSON.stringify({ type: 'auth' }));
     };
 
     ws.onmessage = (event) => {
@@ -143,8 +148,13 @@ function App() {
         const data = JSON.parse(event.data) as WSMessage;
 
         switch (data.type) {
-          case "connected":
+          case "auth_success":
+            console.log("WebSocket 认证成功");
+            setIsConnecting(false);
             setIsConnected(true);
+            break;
+
+          case "connected":
             setSessionId(data.sessionId);
             break;
 
@@ -314,9 +324,17 @@ function App() {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setIsConnected(false);
       setIsConnecting(false);
+
+      // 如果被拒绝（401 或 1008），重试连接
+      if ((event.code === 1008 || event.code === 4001) && retryCount < 3) {
+        console.log(`连接被拒绝，${1000}ms 后重试... (${retryCount + 1}/3)`);
+        setTimeout(() => {
+          connect(retryCount + 1);
+        }, 1000);
+      }
     };
 
     ws.onerror = (error) => {
@@ -328,7 +346,29 @@ function App() {
   }, []);
 
   useEffect(() => {
-    connect();
+    // 自动认证（本地前端）
+    const checkAuth = async () => {
+      try {
+        // 调用内部认证接口，获取 token 和设置 Cookie
+        const res = await fetch('/api/auth/internal');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            setIsAuthenticated(true);
+            // 立即连接 WebSocket
+            connect();
+          } else {
+            console.error("自动认证失败");
+          }
+        } else {
+          console.error("认证请求失败");
+        }
+      } catch (e) {
+        console.error("认证请求异常", e);
+      }
+    };
+
+    checkAuth();
 
     return () => {
       if (wsRef.current) {

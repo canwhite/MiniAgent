@@ -13,9 +13,20 @@ import {
 import type { Model } from "@mariozechner/pi-ai";
 import { join } from "path";
 import { MonitorLogger } from "./lib/logger.js";
-import { saveSessionMeta, getAllSessions, getSessionById, deleteSessionFromDb } from "./db/index.js";
+import {
+  saveSessionMeta,
+  getAllSessions,
+  getSessionById,
+  deleteSessionFromDb,
+} from "./db/index.js";
 import { getCurrentTimeTool } from "./tools/index.js";
-import { existsSync, readdirSync, readFileSync, unlinkSync } from "fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
 
 const apiKey =
   process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY || "";
@@ -28,6 +39,99 @@ if (!apiKey) {
   console.error("  export ANTHROPIC_API_KEY=your_key_here  # 使用 Claude");
   process.exit(1);
 }
+
+// ==================== API Token 认证 ====================
+// 生成或读取 API Token
+function getOrGenerateToken(): string {
+  const token = process.env.TOKEN;
+  if (token && token !== "xxx") {
+    console.log(`[AUTH] 使用现有 Token: ${token.substring(0, 8)}...`);
+    return token;
+  }
+
+  const newToken = (globalThis as any).crypto.randomUUID() as string;
+  const envPath = join(process.cwd(), ".env");
+
+  let envContent = "";
+  try {
+    envContent = readFileSync(envPath, "utf-8");
+  } catch (e) {
+    // 文件不存在，使用空内容
+  }
+
+  const lines = envContent.split("\n");
+  let tokenUpdated = false;
+  const updatedLines = lines.map((line) => {
+    if (line.startsWith("TOKEN=")) {
+      tokenUpdated = true;
+      return `TOKEN=${newToken}`;
+    }
+    return line;
+  });
+
+  if (!tokenUpdated) {
+    updatedLines.push(`TOKEN=${newToken}`);
+  }
+
+  writeFileSync(envPath, updatedLines.join("\n"));
+  console.log(`[AUTH] 生成新 Token: ${newToken}`);
+  console.log(
+    `[AUTH] 请使用 POST /api/auth 验证，body: {"token": "${newToken}"}`,
+  );
+
+  return newToken;
+}
+
+const API_TOKEN = getOrGenerateToken();
+
+// 从请求中提取 Cookie 中的 token
+function extractTokenFromCookie(req: Request): string | null {
+  const cookieHeader = req.headers.get("Cookie");
+  if (!cookieHeader) return null;
+
+  const cookies = cookieHeader.split(";").map((c: string) => c.trim());
+  const tokenCookie = cookies.find((c: string) => c.startsWith("api_token="));
+
+  if (!tokenCookie) return null;
+
+  return tokenCookie.substring("api_token=".length);
+}
+
+// 从请求中提取 Authorization Header 中的 token
+function extractTokenFromAuthHeader(req: Request): string | null {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) return null;
+
+  // 支持 "Bearer token" 格式
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (match) return match[1];
+
+  // 直接使用 header 值
+  return authHeader;
+}
+
+// 从请求中提取 token（支持 Cookie 和 Authorization Header）
+function extractToken(req: Request): string | null {
+  return extractTokenFromCookie(req) || extractTokenFromAuthHeader(req);
+}
+
+// 验证 token
+function isValidToken(providedToken: string | null): boolean {
+  if (!providedToken) return false;
+  return providedToken === API_TOKEN;
+}
+
+// 设置 Cookie 的响应头
+function createAuthCookieHeaders() {
+  return {
+    "Set-Cookie": `api_token=${API_TOKEN}; HttpOnly; Path=/; SameSite=Lax${
+      process.env.NODE_ENV === "production" ? "; Secure" : ""
+    }`,
+    "Content-Type": "application/json",
+    ...corsHeaders,
+  };
+}
+// ==================== API Token 认证结束 ====================
 
 function createDeepSeekModel(): Model<"openai-completions"> {
   return {
@@ -78,35 +182,38 @@ async function getSessionMessages(id: string) {
   }
 
   const filePath = sessionMeta.file_path;
-  
+
   if (!existsSync(filePath)) {
     return null;
   }
 
   const fileContent = readFileSync(filePath, "utf-8");
-  
+
   const messages: any[] = [];
   const lines = fileContent.split("\n").filter(Boolean);
-  
+
   for (const line of lines) {
     try {
       const data = JSON.parse(line);
       if (data.type === "message") {
         const msg = data.message;
         let content = "";
-        
+
         if (msg.role === "user") {
           content = msg.content?.[0]?.text || "";
         } else if (msg.role === "assistant") {
-          content = msg.content?.map((c: any) => {
-            if (c.type === "text") return c.text;
-            if (c.type === "toolCall") return `[调用工具: ${c.name}]`;
-            return "";
-          }).join("") || "";
+          content =
+            msg.content
+              ?.map((c: any) => {
+                if (c.type === "text") return c.text;
+                if (c.type === "toolCall") return `[调用工具: ${c.name}]`;
+                return "";
+              })
+              .join("") || "";
         } else if (msg.role === "toolResult") {
           content = msg.content?.[0]?.text || "";
         }
-        
+
         if (content) {
           messages.push({
             role: msg.role === "toolResult" ? "tool" : msg.role,
@@ -119,7 +226,7 @@ async function getSessionMessages(id: string) {
       // Skip invalid JSON lines
     }
   }
-  
+
   return { sessionId: sessionMeta.session_id, messages };
 }
 
@@ -181,7 +288,8 @@ async function createSession(sessionId: string) {
               "基于扩散模型叙事去噪流的小说写作 SOP。通过锁定全局信号、预测叙事噪声、精准去噪、随机修正四个步骤，解决 AI 翻译腔、逻辑断层和故事平淡的问题。",
             filePath:
               "/Users/zack/Desktop/MiniAgent/skills/diffusion-narrative-denouncing/SKILL.md",
-            baseDir: "/Users/zack/Desktop/MiniAgent/skills/diffusion-narrative-denouncing",
+            baseDir:
+              "/Users/zack/Desktop/MiniAgent/skills/diffusion-narrative-denouncing",
             source: "inline",
             disableModelInvocation: false,
           },
@@ -381,12 +489,61 @@ const server = Bun.serve({
       return new Response(null, { headers: corsHeaders });
     }
 
+    // 内部认证接口（本地前端自动认证）
+    // 只设置 Cookie，不返回 token（前端通过 WebSocket 连接后自动认证）
+    if (url.pathname === "/api/auth/internal") {
+      return Response.json(
+        { success: true, message: "自动认证成功" },
+        { headers: createAuthCookieHeaders() },
+      );
+    }
+
+    // 外部认证接口（需要手动传递 token）
+    if (url.pathname === "/api/auth" && req.method === "POST") {
+      try {
+        const body = (await req.json()) as { token?: string };
+        const providedToken = body.token;
+
+        if (isValidToken(providedToken || null)) {
+          return Response.json(
+            { success: true, message: "认证成功" },
+            { headers: createAuthCookieHeaders() },
+          );
+        } else {
+          return Response.json(
+            { success: false, message: "Token 无效" },
+            { status: 401, headers: corsHeaders },
+          );
+        }
+      } catch (e) {
+        return Response.json(
+          { success: false, message: "请求格式错误" },
+          { status: 400, headers: corsHeaders },
+        );
+      }
+    }
+
     if (url.pathname === "/ws") {
+      // WebSocket 握手时不验证 Cookie（浏览器可能不携带）
       const upgraded = server.upgrade(req);
       if (upgraded) {
         return undefined;
       }
       return new Response("WebSocket upgrade failed", { status: 400 });
+    }
+
+    // API 接口需要 Token 验证（除了认证接口）
+    if (url.pathname.startsWith("/api/") && !url.pathname.startsWith("/api/auth")) {
+      const token = extractToken(req);
+      if (!isValidToken(token)) {
+        return Response.json(
+          {
+            error: "未授权，请先认证",
+            hint: "使用 POST /api/auth 并提供 token，或使用 Authorization: Bearer <token> header"
+          },
+          { status: 401, headers: corsHeaders },
+        );
+      }
     }
 
     if (url.pathname === "/api/messages" && req.method === "POST") {
@@ -406,7 +563,10 @@ const server = Bun.serve({
       const id = url.pathname.split("/").pop()!;
       const sessionMessages = await getSessionMessages(id);
       if (!sessionMessages) {
-        return Response.json({ error: "Session 不存在" }, { status: 404, headers: corsHeaders });
+        return Response.json(
+          { error: "Session 不存在" },
+          { status: 404, headers: corsHeaders },
+        );
       }
       return Response.json(sessionMessages, { headers: corsHeaders });
     }
@@ -470,12 +630,18 @@ const server = Bun.serve({
   },
   websocket: {
     open(ws) {
+      // WebSocket 握手时不验证 Cookie（浏览器可能不携带）
+      // 等待第一条消息，如果是认证请求则验证，否则假设已通过 Cookie 认证
       console.log("[WebSocket] 新连接已建立");
       const sessionId = generateSessionId();
 
       // Create logger instance
       const logger = MonitorLogger.createInstance();
-      (ws as any).data = { sessionId, logger };
+      (ws as any).data = {
+        sessionId,
+        logger,
+        authenticated: false,  // 添加认证标志
+      };
 
       logger.log(`[SESSION] Session ${sessionId} started, WebSocket opened`);
 
@@ -606,7 +772,31 @@ const server = Bun.serve({
           type?: string;
           message?: string;
           sessionId?: string;
+          token?: string;
         };
+
+        // 认证消息处理（本地前端直接信任）
+        if (data.type === "auth") {
+          // 本地前端已经通过 /api/auth/internal 认证过
+          // 直接认证成功，不验证 token
+          (ws as any).data.authenticated = true;
+          console.log("[WebSocket] 认证成功（本地前端）");
+          ws.send(JSON.stringify({ type: "auth_success" }));
+          return;
+        }
+
+        // 其他消息需要先认证
+        if (!(ws as any).data?.authenticated) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "未认证，请先发送 auth 消息",
+            }),
+          );
+          ws.close(1008, "Unauthorized");
+          return;
+        }
+
         const sessionId = (ws as any).data?.sessionId;
         const session = getSession(sessionId!);
 
