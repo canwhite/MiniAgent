@@ -185,6 +185,16 @@ async function createSession(sessionId: string) {
             source: "inline",
             disableModelInvocation: false,
           },
+          {
+            name: "wechat-article",
+            description:
+              "微信公众号文章写作助手，帮助用户创作高质量的公众号文章",
+            filePath:
+              "/Users/zack/Desktop/MiniAgent/skills/wechat-article/SKILL.md",
+            baseDir: "/Users/zack/Desktop/MiniAgent/skills/wechat-article",
+            source: "inline",
+            disableModelInvocation: false,
+          },
         ],
         diagnostics: [],
       }),
