@@ -128,6 +128,7 @@
 
     .history-item-content {
       flex: 1;
+      min-width: 0;
       cursor: pointer;
       margin-right: 0.5rem;
     }
@@ -148,6 +149,7 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      width: 100%;
     }
 
     .history-item-time {
@@ -160,10 +162,12 @@
       background: none;
       border: none;
       cursor: pointer;
-      padding: 0.25rem 0.5rem;
+      padding: 0.25rem;
       opacity: 0.4;
       transition: opacity 0.2s;
       font-size: 0.9rem;
+      flex-shrink: 0;
+      margin-left: 0.25rem;
     }
 
     .history-delete-btn:hover {
