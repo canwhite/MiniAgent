@@ -658,14 +658,38 @@ const server = Bun.serve({
             }
           }
 
-          session.prompt(data.message).catch((error) => {
+          // Check if session is currently streaming a response
+          if (session.isStreaming) {
+            // Queue the prompt to be processed after current response completes
+            console.log(`[WebSocket] 会话正在响应中，将新消息加入队列`);
+
+            // Notify frontend that question is queued
             ws.send(
               JSON.stringify({
-                type: "error",
-                message: error.message,
+                type: "question_queued",
+                question: data.message,
               }),
             );
-          });
+
+            session.followUp(data.message).catch((error) => {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message: error.message,
+                }),
+              );
+            });
+          } else {
+            // Process immediately if no active streaming
+            session.prompt(data.message).catch((error) => {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message: error.message,
+                }),
+              );
+            });
+          }
         }
       } catch (error: any) {
         ws.send(
