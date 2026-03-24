@@ -104,7 +104,7 @@ function extractTokenFromAuthHeader(req: Request): string | null {
 
   // 支持 "Bearer token" 格式
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (match) return match[1];
+  if (match) return match[1] ?? null;
 
   // 直接使用 header 值
   return authHeader;

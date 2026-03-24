@@ -237,12 +237,413 @@ tail -f monitor.log
 - **通信**: WebSocket
 - **样式**: 自定义 CSS（暗色主题）
 
+## 外部 API 调用指南
+
+MiniAgent 提供了 HTTP API 和 WebSocket 接口，支持外部应用调用。
+
+### 认证方式
+
+#### 方式 A：Authorization Header（推荐）
+
+```bash
+curl http://localhost:3000/api/sessions/list \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE_HERE"
+```
+
+#### 方式 B：Cookie
+
+```bash
+# 步骤 1：认证获取 Cookie
+curl -X POST http://localhost:3000/api/auth \
+  -H "Content-Type: application/json" \
+  -d '{"token": "YOUR_TOKEN_HERE_HERE"}' \
+  -c cookies.txt
+
+# 步骤 2：使用 Cookie 调用 API
+curl http://localhost:3000/api/sessions/list -b cookies.txt
+```
+
+### HTTP API 端点
+
+#### 1. 发送消息（对话）
+
+**POST** `/api/messages`
+
+发送消息并获取 AI 响应：
+
+```bash
+curl -X POST http://localhost:3000/api/messages \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "你好，请介绍一下你自己"
+  }'
+```
+
+**响应：**
+```json
+{
+  "sessionId": "session_abc123",
+  "response": "你好！我是一个 AI 助手..."
+}
+```
+
+#### 2. 继续对话（保持上下文）
+
+**POST** `/api/messages`
+
+使用 `sessionId` 继续之前的对话：
+
+```bash
+curl -X POST http://localhost:3000/api/messages \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "我刚才问了你什么？",
+    "sessionId": "session_abc123"
+  }'
+```
+
+#### 3. 获取所有会话列表
+
+**GET** `/api/sessions/list`
+
+```bash
+curl http://localhost:3000/api/sessions/list \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
+
+**响应：**
+```json
+{
+  "sessions": [
+    {
+      "id": "session_abc123",
+      "session_id": "session_abc123",
+      "first_question": "你好，请介绍一下你自己",
+      "created_at": 1712000000000
+    }
+  ]
+}
+```
+
+#### 4. 获取会话历史消息
+
+**GET** `/api/sessions/:sessionId`
+
+```bash
+curl http://localhost:3000/api/sessions/session_abc123 \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
+
+**响应：**
+```json
+{
+  "sessionId": "session_abc123",
+  "messages": [
+    {
+      "role": "user",
+      "content": "你好，请介绍一下你自己"
+    },
+    {
+      "role": "assistant",
+      "content": "你好！我是一个 AI 助手..."
+    }
+  ]
+}
+```
+
+#### 5. 删除会话
+
+**DELETE** `/api/sessions/:sessionId`
+
+```bash
+curl -X DELETE http://localhost:3000/api/sessions/session_abc123 \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
+
+#### 6. 健康检查
+
+**GET** `/health`
+
+```bash
+curl http://localhost:3000/health
+```
+
+**响应：**
+```json
+{
+  "status": "ok",
+  "sessions": 5
+}
+```
+
+### WebSocket 实时通信
+
+WebSocket 支持实时流式响应，适合需要即时反馈的场景。
+
+#### 连接和认证
+
+```javascript
+const ws = new WebSocket("ws://localhost:3000/ws");
+
+ws.onopen = () => {
+  // 连接建立后发送认证消息
+  ws.send(JSON.stringify({ type: "auth" }));
+};
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+
+  if (data.type === "auth_success") {
+    console.log("认证成功");
+    // 现在可以发送消息
+  }
+};
+```
+
+#### 发送消息
+
+```javascript
+ws.send(JSON.stringify({
+  type: "prompt",
+  message: "请用 Python 写一个快速排序"
+}));
+```
+
+#### 接收流式响应
+
+```javascript
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+
+  switch (data.type) {
+    case "text_delta":
+      // 接收文本增量
+      console.log(data.delta);
+      break;
+
+    case "tool_call_start":
+      // AI 开始调用工具
+      console.log(`调用工具: ${data.tool}`);
+      break;
+
+    case "tool_call_delta":
+      // 工具调用增量更新（如文件写入进度）
+      if (data.tool === "write") {
+        console.log(`正在写入文件: ${data.path}`);
+      }
+      break;
+
+    case "tool_end":
+      // 工具调用完成
+      console.log(`工具执行完成: ${data.success ? "成功" : "失败"}`);
+      break;
+
+    case "response_end":
+      // 完整响应结束
+      console.log("对话完成");
+      break;
+
+    case "error":
+      console.error("错误:", data.message);
+      break;
+  }
+};
+```
+
+#### 停止生成
+
+```javascript
+ws.send(JSON.stringify({ type: "stop" }));
+```
+
+### 完整示例代码
+
+#### Python 示例
+
+```python
+import requests
+
+TOKEN = "your_token_here"
+BASE_URL = "http://localhost:3000"
+
+headers = {
+    "Authorization": f"Bearer {TOKEN}",
+    "Content-Type": "application/json"
+}
+
+# 发送消息
+response = requests.post(
+    f"{BASE_URL}/api/messages",
+    headers=headers,
+    json={"message": "什么是递归？"}
+)
+
+data = response.json()
+print(f"Session ID: {data['sessionId']}")
+print(f"Response: {data['response']}")
+
+# 继续对话
+response2 = requests.post(
+    f"{BASE_URL}/api/messages",
+    headers=headers,
+    json={
+        "message": "能给我举个例子吗？",
+        "sessionId": data['sessionId']
+    }
+)
+
+print(f"Response 2: {response2.json()['response']}")
+```
+
+#### JavaScript/Node.js 示例
+
+```javascript
+const TOKEN = "your_token_here";
+const BASE_URL = "http://localhost:3000";
+
+async function chat(message, sessionId = null) {
+  const response = await fetch(`${BASE_URL}/api/messages`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      message,
+      sessionId
+    }),
+  });
+
+  const data = await response.json();
+  return data;
+}
+
+// 使用示例
+chat("帮我写一个快速排序算法")
+  .then(result => {
+    console.log("Session:", result.sessionId);
+    console.log("Response:", result.response);
+
+    // 继续对话
+    return chat("这段代码的时间复杂度是多少？", result.sessionId);
+  })
+  .then(result2 => {
+    console.log("Response 2:", result2.response);
+  });
+```
+
+#### WebSocket 完整示例
+
+```javascript
+class MiniAgentClient {
+  constructor(url, token) {
+    this.url = url;
+    this.token = token;
+    this.ws = null;
+    this.messageHandlers = [];
+  }
+
+  connect() {
+    return new Promise((resolve, reject) => {
+      this.ws = new WebSocket(this.url);
+
+      this.ws.onopen = () => {
+        // 发送认证
+        this.ws.send(JSON.stringify({ type: "auth" }));
+      };
+
+      this.ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "auth_success") {
+          resolve();
+        } else {
+          // 触发消息处理器
+          this.messageHandlers.forEach(handler => handler(data));
+        }
+      };
+
+      this.ws.onerror = (error) => reject(error);
+    });
+  }
+
+  onMessage(handler) {
+    this.messageHandlers.push(handler);
+  }
+
+  sendMessage(message) {
+    this.ws.send(JSON.stringify({
+      type: "prompt",
+      message
+    }));
+  }
+
+  stop() {
+    this.ws.send(JSON.stringify({ type: "stop" }));
+  }
+
+  disconnect() {
+    this.ws.close();
+  }
+}
+
+// 使用示例
+const client = new MiniAgentClient("ws://localhost:3000/ws", "your_token");
+
+await client.connect();
+
+client.onMessage((data) => {
+  if (data.type === "text_delta") {
+    process.stdout.write(data.delta);
+  }
+});
+
+client.sendMessage("介绍一下 Python");
+```
+
+### 错误处理
+
+#### HTTP 状态码
+
+- **200** - 请求成功
+- **400** - 请求参数错误
+- **401** - 未授权（Token 无效或缺失）
+- **404** - 资源不存在（如会话不存在）
+- **500** - 服务器内部错误
+
+#### 错误响应格式
+
+```json
+{
+  "error": "错误描述信息"
+}
+```
+
+### 安全建议
+
+1. **生产环境使用 HTTPS**
+   - 设置 `NODE_ENV=production` 环境变量
+   - Cookie 将自动添加 `Secure` 标志
+
+2. **定期更换 Token**
+   - 修改 `.env` 文件中的 `TOKEN` 值
+   - 重启服务器
+
+3. **限制访问来源**
+   - 使用防火墙限制 IP 访问
+   - 只允许可信网络访问
+
+详细的安全说明请参考 [SECURITY.md](./SECURITY.md) 和 [docs/AUTHENTICATION.md](./docs/AUTHENTICATION.md)。
+
 ## 参考资源
 
 - [pi-mono GitHub](https://github.com/badlogic/pi-mono)
 - [pi-coding-agent 文档](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent)
 - [Anthropic Tool Use](https://docs.anthropic.com/claude/docs/tool-use)
 - [项目文档](./docs/)
+- [认证机制详细说明](./docs/AUTHENTICATION.md)
 
 ## License
 
