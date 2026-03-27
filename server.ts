@@ -1,9 +1,9 @@
 import {
   createAgentSession,
   type ToolDefinition,
+  type AgentSession,
   createBashTool,
   createReadTool,
-  createWriteTool,
   createEditTool,
   SessionManager,
   AuthStorage,
@@ -13,6 +13,7 @@ import {
 import type { Model } from "@mariozechner/pi-ai";
 import { join } from "path";
 import { MonitorLogger } from "./lib/logger.js";
+import { extractFromSessionText } from "./lib/session-content-extractor.js";
 import {
   saveSessionMeta,
   getAllSessions,
@@ -20,13 +21,7 @@ import {
   deleteSessionFromDb,
 } from "./db/index.js";
 import { getCurrentTimeTool } from "./tools/index.js";
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 
 const apiKey =
   process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY || "";
@@ -144,7 +139,7 @@ function createDeepSeekModel(): Model<"openai-completions"> {
     input: ["text", "image"] as ("text" | "image")[],
     cost: { input: 0.27, output: 1.1, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 64000,
-    maxTokens: 8000,
+    maxTokens: 16000,
     compat: {
       supportsReasoningEffort: false,
     },
@@ -155,23 +150,25 @@ const systemPrompt = `你是一个专业的编程助手，可以帮助用户完�
 
 你的能力包括：
 - 执行 shell 命令
-- 读写文件（重要：必须使用 write 工具来写文件，所有文件都会被自动保存到 custom 子目录）
+- 读取文件
 - 编辑文件（使用 edit 工具修改文件中的特定内容）
 - 网络搜索
 - 获取当前时间
 
 工作原则：
 1. 理解用户需求，选择合适的工具
-2. 写新文件时必须使用 write 工具
-3. 修改现有文件时优先使用 edit 工具（指定 path、oldText 和 newText）
-4. 按照工具的参数要求正确调用
-5. 根据工具结果继续处理或给出最终答案
-6. 如果任务复杂，可以分步骤完成
-7. 遇到错误时，尝试分析原因并给出解决建议
+2. 修改现有文件时优先使用 edit 工具（指定 path、oldText 和 newText）
+3. 当用户要求生成内容（小说章节、文章、代码等）时：
+   - **直接输出最终内容，不要输出创作过程、分析步骤或中间思考**
+   - 如果需要使用创作方法，在内部完成，只输出最终结果
+   - 可以在开头用章节标题（如 ## 标题），然后直接输出正文
+4. 当用户要求生成 JSON 时，必须严格按照用户指定的格式和字段生成，使用 JSON 代码块格式输出
+5. 按照工具的参数要求正确调用
+6. 根据工具结果继续处理或给出最终答案
+7. 如果任务复杂，可以分步骤完成
+8. 遇到错误时，尝试分析原因并给出解决建议
 
 请始终使用中文回复用户。`;
-
-import { type AgentSession } from "@mariozechner/pi-coding-agent";
 
 const sessions = new Map<string, AgentSession>();
 
@@ -259,7 +256,6 @@ async function createSession(sessionId: string) {
     tools: [
       createReadTool(cwd),
       createBashTool(join(cwd, "custom")),
-      createWriteTool(join(cwd, "custom")),
       createEditTool(cwd),
     ],
     customTools: [getCurrentTimeTool],
@@ -303,6 +299,16 @@ async function createSession(sessionId: string) {
             source: "inline",
             disableModelInvocation: false,
           },
+          {
+            name: "no-useeffect",
+            description:
+              "React 无 useEffect 编码规范 - 禁止直接使用 useEffect，使用派生状态、数据获取库、事件处理器、useMountEffect、key 重置等替代模式",
+            filePath:
+              "/Users/zack/Desktop/MiniAgent/skills/no-useeffect/SKILL.md",
+            baseDir: "/Users/zack/Desktop/MiniAgent/skills/no-useeffect",
+            source: "inline",
+            disableModelInvocation: false,
+          },
         ],
         diagnostics: [],
       }),
@@ -316,9 +322,6 @@ async function createSession(sessionId: string) {
       reload: async () => {},
     },
   });
-
-  // Wait a bit for the session file to be created (needed for async file creation)
-  // 已移除，改为在发送第一条消息时获取文件路径
 
   sessions.set(sessionId, result.session);
   return { session: result.session };
@@ -341,6 +344,49 @@ function generateSessionId(): string {
 }
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT ?? "3000", 10) : 3000;
+
+/**
+ * 从 Session 文件中读取最后一条 assistant 消息的完整文本
+ */
+async function getLastAssistantMessageFromFile(
+  sessionFilePath: string,
+  logger?: { log: (msg: string) => void },
+): Promise<string> {
+  try {
+    const file = Bun.file(sessionFilePath);
+    const fileContent = await file.text();
+    const lines = fileContent.split("\n").filter(Boolean);
+
+    // 从后往前找最后一条 assistant 消息
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const line = lines[i];
+        if (!line) continue;
+        const data = JSON.parse(line);
+        if (data.type === "message" && data.message?.role === "assistant") {
+          // 提取所有 text 类型的 content
+          const textParts =
+            data.message.content
+              ?.filter((c: any) => c.type === "text")
+              .map((c: any) => c.text) || [];
+
+          logger?.log(
+            `[SESSION] 从文件读取最后一条 assistant 消息，长度: ${textParts.join("").length}`,
+          );
+          return textParts.join("");
+        }
+      } catch (e) {
+        // Skip invalid JSON lines
+      }
+    }
+
+    logger?.log("[SESSION] 未找到 assistant 消息");
+    return "";
+  } catch (e) {
+    logger?.log(`[SESSION] 读取文件失败: ${e}`);
+    return "";
+  }
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -369,11 +415,20 @@ function getContentType(filePath: string): string {
 }
 
 async function handleApiMessage(req: Request): Promise<Response> {
+  const startTime = Date.now();
+  const logger = MonitorLogger.getInstance();
   try {
     const body = (await req.json()) as { message?: string; sessionId?: string };
     const { message, sessionId } = body;
 
+    logger.log(
+      `[HTTP IN] Method: ${req.method} | Path: /api/messages | SessionID: ${sessionId || "(new)"} | Message: ${message?.substring(0, 100)}${message && message.length > 100 ? "..." : ""}`,
+    );
+
     if (!message || typeof message !== "string") {
+      logger.log(
+        `[HTTP OUT] Status: 400 | Error: 缺少 'message' 字段 | Duration: ${Date.now() - startTime}ms`,
+      );
       return Response.json(
         { error: "缺少 'message' 字段" },
         { status: 400, headers: corsHeaders },
@@ -400,9 +455,15 @@ async function handleApiMessage(req: Request): Promise<Response> {
       session = result.session;
     }
 
-    const events: any[] = [];
+    // 收集 session 事件
+    let isWriting = true;
+
     session.subscribe((event) => {
-      events.push(event);
+      // message_end 表示写入完全停止
+      if (event.type === "message_end") {
+        isWriting = false;
+        logger.log("[SESSION] 写入完成");
+      }
     });
 
     // Get session file path from PI SDK (created when session is initialized)
@@ -410,28 +471,50 @@ async function handleApiMessage(req: Request): Promise<Response> {
 
     await session.prompt(message);
 
+    // 等待 message_end 事件（确保写入完全停止）
+    const maxWaitTime = 10000; // 增加等待时间到 10 秒
+    const startTime2 = Date.now();
+    while (isWriting && Date.now() - startTime2 < maxWaitTime) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
     // Only save if this is a new session (no existing sessionId in request)
     if (!sessionId && sessionFilePath) {
       saveSessionMeta(usedSessionId, message, sessionFilePath);
     }
 
-    const textResponse = events
-      .filter(
-        (e) =>
-          e.type === "message_update" &&
-          e.assistantMessageEvent.type === "text_delta",
-      )
-      .map((e) => e.assistantMessageEvent.delta)
-      .join("");
+    // ✅ 从 Session 文件读取完整的 assistant 消息
+    if (!sessionFilePath) {
+      return Response.json(
+        { error: "Session 文件路径不存在" },
+        { status: 500, headers: corsHeaders },
+      );
+    }
+
+    const fullTextResponse = await getLastAssistantMessageFromFile(
+      sessionFilePath,
+      logger,
+    );
+
+    // 从完整文本中提取最终内容
+    const generatedContent = extractFromSessionText(fullTextResponse, logger);
+
+    logger.log(
+      `[HTTP OUT] Status: 200 | SessionID: ${usedSessionId} | ResponseLength: ${fullTextResponse.length} | HasGeneratedContent: ${!!generatedContent} | Duration: ${Date.now() - startTime}ms`,
+    );
 
     return Response.json(
       {
         sessionId: usedSessionId,
-        response: textResponse,
+        response: fullTextResponse,
+        generatedContent: generatedContent,
       },
       { headers: corsHeaders },
     );
   } catch (error: any) {
+    logger.log(
+      `[HTTP OUT] Status: 500 | Error: ${error.message} | Duration: ${Date.now() - startTime}ms`,
+    );
     return Response.json(
       { error: error.message },
       { status: 500, headers: corsHeaders },
@@ -440,8 +523,13 @@ async function handleApiMessage(req: Request): Promise<Response> {
 }
 
 async function handleCreateSession(): Promise<Response> {
+  const logger = MonitorLogger.getInstance();
+  const startTime = Date.now();
   const sessionId = generateSessionId();
   await createSession(sessionId);
+  logger.log(
+    `[HTTP OUT] Method: POST | Path: /api/sessions | Status: 200 | SessionID: ${sessionId} | Duration: ${Date.now() - startTime}ms`,
+  );
   return Response.json(
     { sessionId, message: "Session 已创建" },
     { headers: corsHeaders },
@@ -449,6 +537,9 @@ async function handleCreateSession(): Promise<Response> {
 }
 
 function handleDeleteSession(sessionId: string): Response {
+  const logger = MonitorLogger.getInstance();
+  logger.log(`[HTTP IN] Method: DELETE | Path: /api/sessions/${sessionId}`);
+
   // Get session metadata to find file path
   const sessionMeta = getSessionById(sessionId);
 
@@ -474,6 +565,9 @@ function handleDeleteSession(sessionId: string): Response {
     deleteSession(sessionId);
   }
 
+  logger.log(
+    `[HTTP OUT] Method: DELETE | Path: /api/sessions/${sessionId} | Status: 200`,
+  );
   return Response.json(
     { message: "Session 已完全删除" },
     { headers: corsHeaders },
@@ -533,13 +627,16 @@ const server = Bun.serve({
     }
 
     // API 接口需要 Token 验证（除了认证接口）
-    if (url.pathname.startsWith("/api/") && !url.pathname.startsWith("/api/auth")) {
+    if (
+      url.pathname.startsWith("/api/") &&
+      !url.pathname.startsWith("/api/auth")
+    ) {
       const token = extractToken(req);
       if (!isValidToken(token)) {
         return Response.json(
           {
             error: "未授权，请先认证",
-            hint: "使用 POST /api/auth 并提供 token，或使用 Authorization: Bearer <token> header"
+            hint: "使用 POST /api/auth 并提供 token，或使用 Authorization: Bearer <token> header",
           },
           { status: 401, headers: corsHeaders },
         );
@@ -640,7 +737,7 @@ const server = Bun.serve({
       (ws as any).data = {
         sessionId,
         logger,
-        authenticated: false,  // 添加认证标志
+        authenticated: false, // 添加认证标志
       };
 
       logger.log(`[SESSION] Session ${sessionId} started, WebSocket opened`);
@@ -660,6 +757,7 @@ const server = Bun.serve({
 
         // Send response_start when AI starts responding
         let hasSentResponseStart = false;
+        const textDeltas: string[] = [];
 
         session.subscribe((event) => {
           logger.log(`[EVENT] Type: ${event.type}`);
@@ -674,6 +772,7 @@ const server = Bun.serve({
               );
             }
             if (event.assistantMessageEvent.type === "text_delta") {
+              textDeltas.push(event.assistantMessageEvent.delta);
               ws.send(
                 JSON.stringify({
                   type: "text_delta",
@@ -693,29 +792,6 @@ const server = Bun.serve({
                   JSON.stringify({
                     type: "tool_call_start",
                     tool: toolCall.name,
-                    contentIndex: event.assistantMessageEvent.contentIndex,
-                  }),
-                );
-              }
-            } else if (event.assistantMessageEvent.type === "toolcall_delta") {
-              // Tool call arguments are being streamed - send incremental updates for write tool
-              const partial = event.assistantMessageEvent.partial;
-              const toolCall =
-                partial.content?.[event.assistantMessageEvent.contentIndex];
-              if (toolCall?.type === "toolCall" && toolCall.name === "write") {
-                const args = (toolCall.arguments || {}) as {
-                  path?: string;
-                  content?: string;
-                };
-                logger.log(
-                  `[TOOLCALL_DELTA] Tool: write, Path: ${args.path || "(generating)"}, Content length: ${args.content?.length || 0}`,
-                );
-                ws.send(
-                  JSON.stringify({
-                    type: "tool_call_delta",
-                    tool: "write",
-                    path: args.path || "",
-                    content: args.content || "",
                     contentIndex: event.assistantMessageEvent.contentIndex,
                   }),
                 );
@@ -757,11 +833,39 @@ const server = Bun.serve({
             );
           } else if (event.type === "message_end") {
             hasSentResponseStart = false;
-            ws.send(
-              JSON.stringify({
-                type: "response_end",
-              }),
+
+            // 从 Session 文件读取完整内容并提取（使用 void 避免阻塞事件循环）
+            const sessionFilePath = session.sessionFile;
+            if (!sessionFilePath) {
+              logger.log("[SESSION] Session 文件路径不存在");
+              ws.send(
+                JSON.stringify({
+                  type: "response_end",
+                  generatedContent: undefined,
+                }),
+              );
+              textDeltas.length = 0;
+              return;
+            }
+
+            void getLastAssistantMessageFromFile(sessionFilePath, logger).then(
+              (fullTextResponse) => {
+                const generatedContent = extractFromSessionText(
+                  fullTextResponse,
+                  logger,
+                );
+
+                ws.send(
+                  JSON.stringify({
+                    type: "response_end",
+                    generatedContent: generatedContent,
+                  }),
+                );
+              },
             );
+
+            // 清空 textDeltas 为下一条消息做准备
+            textDeltas.length = 0;
           }
         });
       });
