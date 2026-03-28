@@ -23,16 +23,39 @@ import {
 import { getCurrentTimeTool } from "./tools/index.js";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 
-const apiKey =
-  process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY || "";
-const useDeepSeek = !!process.env.DEEPSEEK_API_KEY;
+// ==================== 模型配置 ====================
+const MODEL_CONFIG = {
+  apiKey: process.env.API_KEY || process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY || "",
+  provider: process.env.MODEL_PROVIDER || "deepseek",
+  baseUrl: process.env.MODEL_BASE_URL || "https://api.deepseek.com/v1",
+  modelId: process.env.MODEL_ID || "deepseek-chat",
+} as const;
 
-if (!apiKey) {
+if (!MODEL_CONFIG.apiKey) {
   console.error("错误：未设置 API Key 环境变量");
   console.error("请设置以下之一：");
-  console.error("  export DEEPSEEK_API_KEY=your_key_here  # 使用 DeepSeek");
-  console.error("  export ANTHROPIC_API_KEY=your_key_here  # 使用 Claude");
+  console.error("  API_KEY=your_key_here           # 推荐，通用配置");
+  console.error("  DEEPSEEK_API_KEY=your_key_here  # 兼容旧配置");
+  console.error("  ANTHROPIC_API_KEY=your_key_here # 使用 Claude");
   process.exit(1);
+}
+
+function createModel(): Model<"openai-completions"> {
+  return {
+    id: MODEL_CONFIG.modelId,
+    name: MODEL_CONFIG.modelId,
+    api: "openai-completions",
+    provider: MODEL_CONFIG.provider,
+    baseUrl: MODEL_CONFIG.baseUrl,
+    reasoning: false,
+    input: ["text", "image"] as ("text" | "image")[],
+    cost: { input: 0.27, output: 1.1, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 204800,
+    maxTokens: 131072,
+    compat: {
+      supportsReasoningEffort: false,
+    },
+  };
 }
 
 // ==================== API Token 认证 ====================
@@ -128,24 +151,6 @@ function createAuthCookieHeaders() {
 }
 // ==================== API Token 认证结束 ====================
 
-function createDeepSeekModel(): Model<"openai-completions"> {
-  return {
-    id: "deepseek-chat",
-    name: "DeepSeek Chat",
-    api: "openai-completions",
-    provider: "deepseek",
-    baseUrl: "https://api.deepseek.com/beta",
-    reasoning: false,
-    input: ["text", "image"] as ("text" | "image")[],
-    cost: { input: 0.27, output: 1.1, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 8192,
-    compat: {
-      supportsReasoningEffort: false,
-    },
-  };
-}
-
 const systemPrompt = `你是一个专业的编程助手，可以帮助用户完成各种开发任务。
 
 你的能力包括：
@@ -236,16 +241,14 @@ async function createSession(sessionId: string) {
   // Create sessionManager first and capture reference
   const sessionManager = SessionManager.create(cwd, join(cwd, "sessions"));
 
-  if (useDeepSeek) {
-    authStorage.setRuntimeApiKey("deepseek", apiKey);
-  }
+  // 设置运行时 API Key（使用配置中的 provider 名称）
+  authStorage.setRuntimeApiKey(MODEL_CONFIG.provider, MODEL_CONFIG.apiKey);
 
-  const model = useDeepSeek
-    ? createDeepSeekModel()
-    : (() => {
-        const { getModel } = require("@mariozechner/pi-ai");
-        return getModel("anthropic", "claude-sonnet-4-20250514");
-      })();
+  // 选择模型：如果配置了 baseUrl 则使用自定义模型，否则使用内置 Claude 模型
+  const { getModel } = require("@mariozechner/pi-ai");
+  const model = MODEL_CONFIG.baseUrl
+    ? createModel()
+    : getModel("anthropic", "claude-sonnet-4-20250514");
 
   const result = await createAgentSession({
     cwd,
