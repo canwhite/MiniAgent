@@ -106,4 +106,5 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 
 ## PS：
 
+- 改动之后记得测试
 - 测试的时候类型判断请用bunx，不要用其他方式
