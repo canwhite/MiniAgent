@@ -25,7 +25,11 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 
 // ==================== 模型配置 ====================
 const MODEL_CONFIG = {
-  apiKey: process.env.API_KEY || process.env.DEEPSEEK_API_KEY || process.env.ANTHROPIC_API_KEY || "",
+  apiKey:
+    process.env.API_KEY ||
+    process.env.DEEPSEEK_API_KEY ||
+    process.env.ANTHROPIC_API_KEY ||
+    "",
   provider: process.env.MODEL_PROVIDER || "deepseek",
   baseUrl: process.env.MODEL_BASE_URL || "https://api.deepseek.com/v1",
   modelId: process.env.MODEL_ID || "deepseek-chat",
@@ -348,6 +352,65 @@ function generateSessionId(): string {
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT ?? "3000", 10) : 3000;
 
+// Session 超时配置（毫秒）
+const SESSION_TIMEOUT_MS = parseInt(
+  process.env.SESSION_TIMEOUT_MS || "300000",
+  10,
+);
+
+/**
+ * 等待 Session 完成执行（message_end 事件或 isStreaming 为 false）
+ */
+async function waitForSessionComplete(
+  session: AgentSession,
+  logger?: { log: (msg: string) => void },
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const startTime = Date.now();
+
+    const timer = setTimeout(() => {
+      unsubscribe();
+      clearInterval(checkInterval);
+      reject(
+        new Error(
+          `Session 超时 (${SESSION_TIMEOUT_MS}ms)，当前状态: isStreaming=${session.isStreaming}`,
+        ),
+      );
+    }, SESSION_TIMEOUT_MS);
+
+    let resolved = false;
+
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "message_end") {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        clearInterval(checkInterval);
+        unsubscribe();
+        logger?.log(
+          `[SESSION] message_end 收到，耗时: ${Date.now() - startTime}ms`,
+        );
+        resolve();
+      }
+    });
+
+    // 备用：如果 isStreaming 变成 false，也认为完成
+    const checkInterval = setInterval(() => {
+      if (!session.isStreaming) {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        clearInterval(checkInterval);
+        unsubscribe();
+        logger?.log(
+          `[SESSION] isStreaming=false，耗时: ${Date.now() - startTime}ms`,
+        );
+        resolve();
+      }
+    }, 500);
+  });
+}
+
 /**
  * 从 Session 文件中读取最后一条 assistant 消息的完整文本
  */
@@ -458,28 +521,13 @@ async function handleApiMessage(req: Request): Promise<Response> {
       session = result.session;
     }
 
-    // 收集 session 事件
-    let isWriting = true;
-
-    session.subscribe((event) => {
-      // message_end 表示写入完全停止
-      if (event.type === "message_end") {
-        isWriting = false;
-        logger.log("[SESSION] 写入完成");
-      }
-    });
-
     // Get session file path from PI SDK (created when session is initialized)
     const sessionFilePath = session.sessionFile;
 
     await session.prompt(message);
 
-    // 等待 message_end 事件（确保写入完全停止）
-    const maxWaitTime = 10000; // 增加等待时间到 10 秒
-    const startTime2 = Date.now();
-    while (isWriting && Date.now() - startTime2 < maxWaitTime) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    // 等待 session 完成（message_end 事件或 isStreaming 为 false）
+    await waitForSessionComplete(session, logger);
 
     // Only save if this is a new session (no existing sessionId in request)
     if (!sessionId && sessionFilePath) {

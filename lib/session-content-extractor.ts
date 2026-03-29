@@ -6,32 +6,55 @@
  */
 
 /**
- * 从 session 累积的文本中提取最终内容
- *
- * @param fullText - AI 输出的完整文本
- * @param logger - 可选的日志记录器
- * @returns 提取的内容，如果没有找到则返回 undefined
+ * 过滤 MiniMax 的 think 标签内容
  */
+function filterThinkTags(text: string): string {
+  // 使用正则表达式匹配 <think>...</think> 标签（支持换行、嵌套等）
+  // 注意：正则默认不匹配嵌套，但通常 think 标签不会嵌套，如果需要处理嵌套可用栈方式
+  // 这里使用 .*? 非贪婪匹配，s 标志使 . 匹配换行符
+  const thinkRegex = /<think\b[^>]*>([\s\S]*?)<\/think\s*>/gi;
+
+  // 移除所有匹配的标签及其内容
+  const filtered = text.replace(thinkRegex, "");
+
+  // 处理不完整的标签：如果存在未闭合的 <think 标签，则移除从该标签开始到末尾的内容
+  // 这可以防止因标签未闭合导致的残留
+  const incompleteRegex = /<think\b[^>]*>[\s\S]*$/gi;
+  const finalFiltered = filtered.replace(incompleteRegex, "");
+
+  // 可选：清理多余的空行（如果需要）
+  // return finalFiltered.replace(/\n\s*\n/g, '\n\n').trim();
+
+  return finalFiltered;
+}
 export function extractFromSessionText(
   fullText: string,
   logger?: { log: (msg: string) => void },
 ): string | undefined {
-  // 0. 最高优先级：提取标记为【最终输出】的内容
-  const finalOutputMatch = fullText.match(/【最终输出】([\s\S]*?)【最终输出】/);
+  // 0. 过滤 MiniMax 的 think 标签内容
+  const filteredText = filterThinkTags(fullText);
+  if (filteredText !== fullText) {
+    logger?.log("[EXTRACT] 已过滤 MiniMax think 标签内容");
+  }
+
+  // 1. 最高优先级：提取标记为【最终输出】的内容
+  const finalOutputMatch = filteredText.match(
+    /【最终输出】([\s\S]*?)【最终输出】/,
+  );
   if (finalOutputMatch && finalOutputMatch[1]) {
     logger?.log("[EXTRACT] 从【最终输出】标记提取内容");
     return finalOutputMatch[1].trim();
   }
 
   // 0.1. 识别 **最终定稿：** 标记
-  const finalDraftMatch = fullText.match(/\*\*最终定稿：\*\*([\s\S]*)/);
+  const finalDraftMatch = filteredText.match(/\*\*最终定稿：\*\*([\s\S]*)/);
   if (finalDraftMatch && finalDraftMatch[1]) {
     logger?.log("[EXTRACT] 从**最终定稿**标记提取内容");
     return finalDraftMatch[1].trim();
   }
 
-  // 1. 尝试提取 JSON 代码块
-  const jsonMatch = fullText.match(/```json\s*([\s\S]*?)\s*```/);
+  // 2. 尝试提取 JSON 代码块
+  const jsonMatch = filteredText.match(/```json\s*([\s\S]*?)\s*```/);
   if (jsonMatch && jsonMatch[1]) {
     try {
       const json = JSON.parse(jsonMatch[1]);
@@ -42,8 +65,8 @@ export function extractFromSessionText(
     }
   }
 
-  // 2. 尝试提取纯 JSON 对象
-  const jsonObjectMatch = fullText.match(/\{[\s\S]*?\}/);
+  // 3. 尝试提取纯 JSON 对象
+  const jsonObjectMatch = filteredText.match(/\{[\s\S]*?\}/);
   if (jsonObjectMatch && jsonObjectMatch[0]) {
     try {
       const json = JSON.parse(jsonObjectMatch[0]) as Record<string, unknown>;
@@ -57,38 +80,38 @@ export function extractFromSessionText(
     }
   }
 
-  // 3. 尝试提取文章内容（公众号文章、章节等）
+  // 4. 尝试提取文章内容（公众号文章、章节等）
   if (
-    fullText.includes("标题") ||
-    fullText.includes("摘要") ||
-    fullText.includes("#") ||
-    fullText.includes("##")
+    filteredText.includes("标题") ||
+    filteredText.includes("摘要") ||
+    filteredText.includes("#") ||
+    filteredText.includes("##")
   ) {
-    const articleText = extractArticleContent(fullText);
+    const articleText = extractArticleContent(filteredText);
     if (articleText) {
       logger?.log("[EXTRACT] 提取文章内容");
       return articleText;
     }
   }
 
-  // 4. 检查是否有"章节"标识的小说内容
+  // 5. 检查是否有"章节"标识的小说内容
   if (
-    fullText.includes("章节") ||
-    fullText.includes("第") ||
-    fullText.length > 500
+    filteredText.includes("章节") ||
+    filteredText.includes("第") ||
+    filteredText.length > 500
   ) {
     // 提取章节正文（去除分析、步骤等）
-    const chapterText = extractChapterContent(fullText);
+    const chapterText = extractChapterContent(filteredText);
     if (chapterText) {
       logger?.log("[EXTRACT] 提取章节内容");
       return chapterText;
     }
   }
 
-  // 5. 后备：返回完整文本（如果足够长且不是过程描述）
-  if (fullText.length > 100 && !isProcessText(fullText)) {
+  // 6. 后备：返回完整文本（如果足够长且不是过程描述）
+  if (filteredText.length > 100 && !isProcessText(filteredText)) {
     logger?.log("[EXTRACT] 使用完整文本作为内容");
-    return fullText;
+    return filteredText;
   }
 
   logger?.log("[EXTRACT] 未能提取有效内容");
