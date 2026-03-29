@@ -752,24 +752,29 @@ const server = Bun.serve({
 
       logger.log(`[SESSION] Session ${sessionId} started, WebSocket opened`);
 
-      createSession(sessionId).then((result) => {
-        const session = result.session;
-        (ws as any).data.firstMessageSaved = false;
-        ws.send(
-          JSON.stringify({
-            type: "connected",
-            sessionId,
-            message: "WebSocket 连接已建立",
-          }),
-        );
+      createSession(sessionId)
+        .then((result) => {
+          const session = result.session;
+          (ws as any).data.session = session;
+          (ws as any).data.firstMessageSaved = false;
+          ws.send(
+            JSON.stringify({
+              type: "connected",
+              sessionId,
+              message: "WebSocket 连接已建立",
+            }),
+          );
 
-        logger.log(`[SESSION] Session created successfully`);
+          logger.log(`[SESSION] Session created successfully`);
 
         // Send response_start when AI starts responding
         let hasSentResponseStart = false;
         const textDeltas: string[] = [];
+        // 防止 message_end 并发处理的标志位
+        let isProcessingMessageEnd = false;
 
-        session.subscribe((event) => {
+        // 保存 unsubscribe 函数以便在连接关闭时清理
+        const unsubscribe = session.subscribe((event) => {
           logger.log(`[EVENT] Type: ${event.type}`);
 
           if (event.type === "message_update") {
@@ -842,6 +847,13 @@ const server = Bun.serve({
               }),
             );
           } else if (event.type === "message_end") {
+            // 防止并发处理 message_end 事件
+            if (isProcessingMessageEnd) {
+              logger.log("[SESSION] message_end 已在处理中，跳过重复事件");
+              return;
+            }
+
+            isProcessingMessageEnd = true;
             hasSentResponseStart = false;
 
             // 等待 Session 完成后再读取文件（避免时序竞态条件）
@@ -855,6 +867,7 @@ const server = Bun.serve({
                 }),
               );
               textDeltas.length = 0;
+              isProcessingMessageEnd = false;
               return;
             }
 
@@ -902,13 +915,35 @@ const server = Bun.serve({
                   }
                 }
               }
+
+              // 重置处理标志
+              isProcessingMessageEnd = false;
             })();
 
             // 清空 textDeltas 为下一条消息做准备
             textDeltas.length = 0;
           }
         });
-      });
+
+        // 保存 unsubscribe 函数以便在连接关闭时清理
+        (ws as any).data.unsubscribe = unsubscribe;
+      })
+        .catch((error) => {
+          // Session 创建失败处理
+          console.error(`[WebSocket] Session 创建失败: ${error.message}`);
+          logger.log(`[ERROR] Session 创建失败: ${error.message}`);
+
+          // 通知客户端创建失败
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              message: "Session 创建失败，请重试",
+            }),
+          );
+
+          // 关闭连接
+          ws.close(1011, "Session creation failed");
+        });
     },
     async message(ws, message) {
       try {
@@ -1076,6 +1111,17 @@ const server = Bun.serve({
       const logger = (ws as any).data?.logger;
       console.log(`[WebSocket] 连接已关闭: ${sessionId}`);
 
+      // 清理事件订阅，防止内存泄漏
+      const unsubscribe = (ws as any).data?.unsubscribe;
+      if (unsubscribe) {
+        try {
+          unsubscribe();
+          console.log(`[WebSocket] 已清理事件订阅: ${sessionId}`);
+        } catch (error) {
+          console.error(`[WebSocket] 清理订阅失败: ${error}`);
+        }
+      }
+
       if (logger) {
         logger.log(`[SESSION] Session ${sessionId} WebSocket closed`);
         logger.close();
@@ -1084,6 +1130,9 @@ const server = Bun.serve({
       if (sessionId) {
         deleteSession(sessionId);
       }
+
+      // 清理 ws.data 引用
+      (ws as any).data = null;
     },
   },
 });
