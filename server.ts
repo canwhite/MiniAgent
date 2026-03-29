@@ -238,7 +238,6 @@ async function getSessionMessages(id: string) {
 
 async function createSession(sessionId: string) {
   const cwd = process.cwd();
-  const sessionsPath = join(cwd, "sessions");
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
 
@@ -367,7 +366,7 @@ async function waitForSessionComplete(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
-
+    //超时关闭
     const timer = setTimeout(() => {
       unsubscribe();
       clearInterval(checkInterval);
@@ -380,6 +379,7 @@ async function waitForSessionComplete(
 
     let resolved = false;
 
+    //成功关闭
     const unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end") {
         if (resolved) return;
