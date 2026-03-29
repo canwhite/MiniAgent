@@ -22,6 +22,7 @@ import {
 } from "./db/index.js";
 import { getCurrentTimeTool } from "./tools/index.js";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { SKILLS } from "./skills/index";
 
 // ==================== 模型配置 ====================
 const MODEL_CONFIG = {
@@ -273,49 +274,7 @@ async function createSession(sessionId: string) {
         runtime: createExtensionRuntime(),
       }),
       getSkills: () => ({
-        skills: [
-          {
-            name: "web-search-tool",
-            description:
-              "提供网页搜索功能示例，演示如何使用 curl 进行 HTTP 请求",
-            filePath:
-              "/Users/zack/Desktop/MiniAgent/skills/web-search-tool/SKILL.md",
-            baseDir: "/Users/zack/Desktop/MiniAgent/skills/web-search-tool",
-            source: "inline",
-            disableModelInvocation: false,
-          },
-          {
-            name: "diffusion-narrative-denouncing",
-            description:
-              "基于扩散模型叙事去噪流的小说写作 SOP。通过锁定全局信号、预测叙事噪声、精准去噪、随机修正四个步骤，解决 AI 翻译腔、逻辑断层和故事平淡的问题。",
-            filePath:
-              "/Users/zack/Desktop/MiniAgent/skills/diffusion-narrative-denouncing/SKILL.md",
-            baseDir:
-              "/Users/zack/Desktop/MiniAgent/skills/diffusion-narrative-denouncing",
-            source: "inline",
-            disableModelInvocation: false,
-          },
-          {
-            name: "wechat-article",
-            description:
-              "微信公众号文章写作助手，帮助用户创作高质量的公众号文章",
-            filePath:
-              "/Users/zack/Desktop/MiniAgent/skills/wechat-article/SKILL.md",
-            baseDir: "/Users/zack/Desktop/MiniAgent/skills/wechat-article",
-            source: "inline",
-            disableModelInvocation: false,
-          },
-          {
-            name: "no-useeffect",
-            description:
-              "React 无 useEffect 编码规范 - 禁止直接使用 useEffect，使用派生状态、数据获取库、事件处理器、useMountEffect、key 重置等替代模式",
-            filePath:
-              "/Users/zack/Desktop/MiniAgent/skills/no-useeffect/SKILL.md",
-            baseDir: "/Users/zack/Desktop/MiniAgent/skills/no-useeffect",
-            source: "inline",
-            disableModelInvocation: false,
-          },
-        ],
+        skills: SKILLS,
         diagnostics: [],
       }),
       getPrompts: () => ({ prompts: [], diagnostics: [] }),
@@ -885,7 +844,7 @@ const server = Bun.serve({
           } else if (event.type === "message_end") {
             hasSentResponseStart = false;
 
-            // 从 Session 文件读取完整内容并提取（使用 void 避免阻塞事件循环）
+            // 等待 Session 完成后再读取文件（避免时序竞态条件）
             const sessionFilePath = session.sessionFile;
             if (!sessionFilePath) {
               logger.log("[SESSION] Session 文件路径不存在");
@@ -899,21 +858,51 @@ const server = Bun.serve({
               return;
             }
 
-            void getLastAssistantMessageFromFile(sessionFilePath, logger).then(
-              (fullTextResponse) => {
-                const generatedContent = extractFromSessionText(
-                  fullTextResponse,
-                  logger,
-                );
+            // message_end 事件已触发，但文件可能还未完全写入
+            // 使用重试机制读取文件，避免因时序问题导致失败
+            void (async () => {
+              const maxRetries = 5;
+              const retryDelay = 100; // 100ms
 
-                ws.send(
-                  JSON.stringify({
-                    type: "response_end",
-                    generatedContent: generatedContent,
-                  }),
-                );
-              },
-            );
+              for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                  const fullTextResponse = await getLastAssistantMessageFromFile(
+                    sessionFilePath,
+                    logger,
+                  );
+                  const generatedContent = extractFromSessionText(
+                    fullTextResponse,
+                    logger,
+                  );
+
+                  ws.send(
+                    JSON.stringify({
+                      type: "response_end",
+                      generatedContent: generatedContent,
+                    }),
+                  );
+                  break; // 成功，退出重试循环
+                } catch (error: any) {
+                  if (attempt === maxRetries) {
+                    // 最后一次重试失败
+                    logger.log(
+                      `[SESSION] 读取文件失败（已重试 ${maxRetries} 次）: ${error.message}`,
+                    );
+                    ws.send(
+                      JSON.stringify({
+                        type: "response_end",
+                        generatedContent: undefined,
+                      }),
+                    );
+                  } else {
+                    // 等待后重试
+                    await new Promise((resolve) =>
+                      setTimeout(resolve, retryDelay),
+                    );
+                  }
+                }
+              }
+            })();
 
             // 清空 textDeltas 为下一条消息做准备
             textDeltas.length = 0;

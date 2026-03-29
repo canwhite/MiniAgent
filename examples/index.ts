@@ -11,6 +11,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
+import { SKILLS } from "../skills/index";
 
 const webSearchTool: ToolDefinition = {
   name: "web_search",
@@ -173,18 +174,7 @@ async function createSession() {
         runtime: createExtensionRuntime(),
       }),
       getSkills: () => ({
-        skills: [
-          {
-            name: "web-search-tool",
-            description:
-              "提供网页搜索功能示例，演示如何使用 curl 进行 HTTP 请求",
-            filePath:
-              "/Users/zack/Desktop/MiniAgent/skills/web-search-tool/SKILL.md",
-            baseDir: "/Users/zack/Desktop/MiniAgent/skills/web-search-tool",
-            source: "inline",
-            disableModelInvocation: false,
-          },
-        ],
+        skills: SKILLS,
         diagnostics: [],
       }),
       getPrompts: () => ({ prompts: [], diagnostics: [] }),
