@@ -1,11 +1,49 @@
 /**
  * 自定义工具集合
  *
- * 这个目录存放所有自定义工具，每个工具一个文件
- * 在这里统一导出，方便在 server.ts 中引入
+ * 集中管理所有可用的 tools，便于维护和扩展
  */
 
-export { getCurrentTimeTool } from "./get-current-time.js";
+import { getCurrentTimeTool } from "./get-current-time.js";
 
-// 可以在这里添加更多工具
-// export { anotherTool } from "./another-tool.js";
+export interface ToolConfig {
+  name: string;
+  description: string;
+  tool: any;
+}
+
+/**
+ * 所有可用的 tools 列表
+ *
+ * 添加新 tool 时：
+ * 1. 在 tools/ 目录下创建新的 tool 文件
+ * 2. 在此数组中添加对应的配置
+ */
+export const TOOLS: ToolConfig[] = [
+  {
+    name: "get-current-time",
+    description: "获取当前时间和日期",
+    tool: getCurrentTimeTool,
+  },
+];
+
+/**
+ * 根据 name 获取 tool 配置
+ */
+export function getToolByName(name: string): ToolConfig | undefined {
+  return TOOLS.find((t) => t.name === name);
+}
+
+/**
+ * 获取所有 tool 名称
+ */
+export function getToolNames(): string[] {
+  return TOOLS.map((t) => t.name);
+}
+
+/**
+ * 获取所有 tool 对象数组（用于 customTools）
+ */
+export function getToolObjects(): any[] {
+  return TOOLS.map((t) => t.tool);
+}

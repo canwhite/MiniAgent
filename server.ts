@@ -20,9 +20,9 @@ import {
   getSessionById,
   deleteSessionFromDb,
 } from "./db/index.js";
-import { getCurrentTimeTool } from "./tools/index.js";
+import { TOOLS } from "./tools/index.js";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
-import { SKILLS } from "./skills/index";
+import { SKILLS } from "./skills/index.js";
 
 // ==================== 模型配置 ====================
 const MODEL_CONFIG = {
@@ -265,7 +265,7 @@ async function createSession(sessionId: string) {
       createBashTool(join(cwd, "custom")),
       createEditTool(cwd),
     ],
-    customTools: [getCurrentTimeTool],
+    customTools: TOOLS.map((t) => t.tool),
     sessionManager,
     resourceLoader: {
       getExtensions: () => ({
