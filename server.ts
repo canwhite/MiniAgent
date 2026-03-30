@@ -299,8 +299,21 @@ function getSession(sessionId: string) {
 function deleteSession(sessionId: string) {
   const session = sessions.get(sessionId);
   if (session) {
-    session.dispose();
-    sessions.delete(sessionId);
+    try {
+      // 检查 session 状态
+      if (session.isStreaming) {
+        console.log(`[DELETE] Session ${sessionId} 仍在运行，先终止`);
+        session.abort().catch(() => {
+          // 忽略 abort 错误
+        });
+      }
+
+      session.dispose();
+      sessions.delete(sessionId);
+      console.log(`[DELETE] Session ${sessionId} 已清理`);
+    } catch (error) {
+      console.error(`[DELETE] Session ${sessionId} 清理失败:`, error);
+    }
   }
 }
 
@@ -325,10 +338,22 @@ async function waitForSessionComplete(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
+    let resolved = false;
+    let unsubscribe: () => void;
+
     //超时关闭
     const timer = setTimeout(() => {
-      unsubscribe();
+      if (resolved) return;
+      resolved = true;
+
+      // 确保清理所有资源
+      try {
+        if (unsubscribe) unsubscribe();
+      } catch (e) {
+        // 忽略清理错误
+      }
       clearInterval(checkInterval);
+
       reject(
         new Error(
           `Session 超时 (${SESSION_TIMEOUT_MS}ms)，当前状态: isStreaming=${session.isStreaming}`,
@@ -336,16 +361,18 @@ async function waitForSessionComplete(
       );
     }, SESSION_TIMEOUT_MS);
 
-    let resolved = false;
-
     //成功关闭
-    const unsubscribe = session.subscribe((event) => {
+    unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end") {
         if (resolved) return;
         resolved = true;
         clearTimeout(timer);
         clearInterval(checkInterval);
-        unsubscribe();
+        try {
+          unsubscribe();
+        } catch (e) {
+          // 忽略清理错误
+        }
         logger?.log(
           `[SESSION] message_end 收到，耗时: ${Date.now() - startTime}ms`,
         );
@@ -360,7 +387,11 @@ async function waitForSessionComplete(
         resolved = true;
         clearTimeout(timer);
         clearInterval(checkInterval);
-        unsubscribe();
+        try {
+          unsubscribe();
+        } catch (e) {
+          // 忽略清理错误
+        }
         logger?.log(
           `[SESSION] isStreaming=false，耗时: ${Date.now() - startTime}ms`,
         );
@@ -486,7 +517,18 @@ async function handleApiMessage(req: Request): Promise<Response> {
     await session.prompt(message);
 
     // 等待 session 完成（message_end 事件或 isStreaming 为 false）
-    await waitForSessionComplete(session, logger);
+    try {
+      await waitForSessionComplete(session, logger);
+    } catch (error: any) {
+      if (error.message.includes("超时")) {
+        logger.log(`[ERROR] Session 处理超时`);
+        return Response.json(
+          { error: "请求超时，请稍后重试" },
+          { status: 408, headers: corsHeaders },
+        );
+      }
+      throw error;
+    }
 
     // Only save if this is a new session (no existing sessionId in request)
     if (!sessionId && sessionFilePath) {
@@ -875,9 +917,16 @@ const server = Bun.serve({
             // 使用重试机制读取文件，避免因时序问题导致失败
             void (async () => {
               const maxRetries = 5;
-              const retryDelay = 100; // 100ms
+              let retryDelay = 50; // 初始延迟更短
 
               for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                // 检查 WebSocket 是否仍然连接
+                if (ws.readyState !== WebSocket.OPEN) {
+                  logger.log(`[SESSION] WebSocket 已关闭，停止重试`);
+                  isProcessingMessageEnd = false;
+                  return;
+                }
+
                 try {
                   const fullTextResponse = await getLastAssistantMessageFromFile(
                     sessionFilePath,
@@ -888,12 +937,15 @@ const server = Bun.serve({
                     logger,
                   );
 
-                  ws.send(
-                    JSON.stringify({
-                      type: "response_end",
-                      generatedContent: generatedContent,
-                    }),
-                  );
+                  // 再次检查连接状态
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(
+                      JSON.stringify({
+                        type: "response_end",
+                        generatedContent: generatedContent,
+                      }),
+                    );
+                  }
                   break; // 成功，退出重试循环
                 } catch (error: any) {
                   if (attempt === maxRetries) {
@@ -901,17 +953,21 @@ const server = Bun.serve({
                     logger.log(
                       `[SESSION] 读取文件失败（已重试 ${maxRetries} 次）: ${error.message}`,
                     );
-                    ws.send(
-                      JSON.stringify({
-                        type: "response_end",
-                        generatedContent: undefined,
-                      }),
-                    );
+                    // 只在连接仍然打开时发送错误响应
+                    if (ws.readyState === WebSocket.OPEN) {
+                      ws.send(
+                        JSON.stringify({
+                          type: "response_end",
+                          generatedContent: undefined,
+                        }),
+                      );
+                    }
                   } else {
-                    // 等待后重试
+                    // 指数退避
                     await new Promise((resolve) =>
                       setTimeout(resolve, retryDelay),
                     );
+                    retryDelay = Math.min(retryDelay * 2, 500); // 最大 500ms
                   }
                 }
               }
@@ -999,6 +1055,17 @@ const server = Bun.serve({
         }
 
         if (data.type === "switch_session" && data.sessionId) {
+          // 防止并发切换 session
+          if ((ws as any).data.isSwitchingSession) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: "Session 切换中，请稍后",
+              }),
+            );
+            return;
+          }
+
           console.log(`[WebSocket] 切换 session 到: ${data.sessionId}`);
 
           const sessionMeta = getSessionById(data.sessionId);
@@ -1011,6 +1078,8 @@ const server = Bun.serve({
             );
             return;
           }
+
+          (ws as any).data.isSwitchingSession = true;
 
           try {
             const success = await session.switchSession(sessionMeta.file_path);
@@ -1043,12 +1112,15 @@ const server = Bun.serve({
               );
             }
           } catch (error: any) {
+            console.error(`[WebSocket] 切换 session 出错:`, error);
             ws.send(
               JSON.stringify({
                 type: "error",
-                message: `切换 session 出错: ${error.message}`,
+                message: "切换 session 出错，请重试",
               }),
             );
+          } finally {
+            (ws as any).data.isSwitchingSession = false;
           }
         } else if (data.type === "prompt" && typeof data.message === "string") {
           console.log(`[WebSocket] 收到消息: ${data.message}`);
@@ -1078,20 +1150,34 @@ const server = Bun.serve({
             );
 
             session.followUp(data.message).catch((error) => {
+              const errorMessage = error?.message || "未知错误";
+              const wsLogger = (ws as any).data?.logger;
+              if (wsLogger) {
+                wsLogger.log(`[ERROR] followUp 失败: ${errorMessage}`);
+              }
+              console.error(`[WebSocket] followUp 失败:`, error);
+
               ws.send(
                 JSON.stringify({
                   type: "error",
-                  message: error.message,
+                  message: "消息处理失败，请重试",
                 }),
               );
             });
           } else {
             // Process immediately if no active streaming
             session.prompt(data.message).catch((error) => {
+              const errorMessage = error?.message || "未知错误";
+              const wsLogger = (ws as any).data?.logger;
+              if (wsLogger) {
+                wsLogger.log(`[ERROR] prompt 失败: ${errorMessage}`);
+              }
+              console.error(`[WebSocket] prompt 失败:`, error);
+
               ws.send(
                 JSON.stringify({
                   type: "error",
-                  message: error.message,
+                  message: "消息处理失败，请重试",
                 }),
               );
             });
@@ -1123,8 +1209,12 @@ const server = Bun.serve({
       }
 
       if (logger) {
-        logger.log(`[SESSION] Session ${sessionId} WebSocket closed`);
-        logger.close();
+        try {
+          logger.log(`[SESSION] Session ${sessionId} WebSocket closed`);
+          logger.close();
+        } catch (error) {
+          console.error(`[WebSocket] Logger 关闭失败:`, error);
+        }
       }
 
       if (sessionId) {
