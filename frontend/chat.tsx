@@ -47,6 +47,8 @@ type Message = {
 type WSMessage =
   | { type: "connected"; sessionId: string; message?: string }
   | { type: "session_switched"; sessionId: string }
+  | { type: "message_start" }
+  | { type: "message_end" }
   | { type: "text_delta"; delta: string }
   | { type: "thinking_start"; contentIndex: number }
   | { type: "thinking_delta"; delta: string }
@@ -161,8 +163,17 @@ function App() {
             setSessionId(data.sessionId);
             break;
 
-          case "response_start":
+          // message_start/message_end 控制停止按钮（每轮消息显示）
+          case "message_start":
             setIsResponding(true);
+            break;
+
+          case "message_end":
+            setIsResponding(false);
+            break;
+
+          case "response_start":
+            // response_start 作为备用保障（通常不需要，因为 message_start 已经设置）
             break;
 
           case "thinking_start":

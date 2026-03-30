@@ -834,10 +834,23 @@ const server = Bun.serve({
           // 记录 message_start 时间，用于检测快速拒绝
           if (event.type === "message_start") {
             (ws as any).data.messageStartTime = Date.now();
+            // 发送 message_start 给前端（用于控制停止按钮）
+            ws.send(
+              JSON.stringify({
+                type: "message_start",
+              }),
+            );
           }
 
           // 检测快速拒绝：如果 message_start 到 message_end < 300ms，认为是被模型过滤
           if (event.type === "message_end") {
+            // 发送 message_end 给前端（用于控制停止按钮）
+            ws.send(
+              JSON.stringify({
+                type: "message_end",
+              }),
+            );
+
             const messageStartTime = (ws as any).data.messageStartTime;
             const elapsed = messageStartTime ? Date.now() - messageStartTime : 0;
             
