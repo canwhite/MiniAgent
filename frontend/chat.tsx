@@ -594,8 +594,10 @@ function App() {
       <div class="header">
         <div class={`status-dot ${statusClass}`} />
         <h1>MiniAgent Chat</h1>
-        {sessionId && <span class="session-id">{sessionId}</span>}
-        <button class="history-btn" onClick={toggleHistory}>history</button>
+        <div class="header-right">
+          {sessionId && <span class="session-id">{sessionId}</span>}
+          <button class="history-btn" onClick={toggleHistory}>history</button>
+        </div>
         {showHistory && (
           <div class="history-dropdown" ref={dropdownRef}>
             <div class="history-dropdown-header">History</div>
