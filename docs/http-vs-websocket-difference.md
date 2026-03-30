@@ -1,242 +1,280 @@
 # HTTP vs WebSocket 事件处理机制差异
 
 ## 目录
-- [什么是 Turn？](#什么是-turn)
+
+- [PI SDK 事件类型层级（从内到外）](#pi-sdk-事件类型层级从内到外)
 - [核心区别对比](#核心区别对比)
 - [详细流程分析](#详细流程分析)
-- [为什么 waitForSessionComplete 在 WebSocket 中无效？](#为什么-waitsessioncomplete-在-websocket-中无效)
-- [正确的解决方案](#正确的解决方案)
+- [为什么等待 message_end 有问题](#为什么等待-message_end-有问题)
+- [正确解决方案：等待 agent_end](#正确解决方案等待-agent_end)
+- [HTTP 和 WebSocket 统一方案](#http-和-websocket-统一方案)
 
-## 什么是 Turn？
+---
 
-**Turn（对话轮次）** = 一次完整的"用户消息 → AI 处理 → AI 响应"周期
+## PI SDK 事件类型层级（从内到外）
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Agent（整个会话）                                        │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │  Turn 1（第一轮对话）                              │  │
-│  │  用户: "帮我读取文件"                              │  │
-│  │  turn_start → message_start → AI 思考            │  │
-│  │  → 调用 read 工具 → 返回结果 → message_end        │  │
-│  │  → turn_end                                        │  │
-│  └───────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │  Turn 2（第二轮对话）                              │  │
-│  │  用户: "文件里有什么内容？"                        │  │
-│  │  turn_start → message_start → AI 思考            │  │
-│  │  → 生成回答 → message_end → turn_end              │  │
-│  └───────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-```
-
-### 事件层级结构
+PI SDK 使用三层事件系统，层级从内到外如下：
 
 ```
-Agent（整个会话）
- └── agent_start
- └── Turn（一次对话轮次）
-     └── turn_start
-     └── Message（一条消息）
-         ├── message_start
-         ├── message_update（流式更新）
-         │   ├── text_delta（文本增量）
-         │   ├── toolcall_start（工具调用生成开始）
-         │   ├── toolcall_delta（工具调用参数增量）
-         │   └── toolcall_end（工具调用生成结束）
-         └── message_end
-     └── Tool Execution（工具实际执行）
-         ├── tool_execution_start
-         ├── tool_execution_update
-         └── tool_execution_end
-     └── turn_end
- └── agent_end
+┌─────────────────────────────────────────────────────────────────┐
+│ AgentEvent (最外层 - 整个会话)                                   │
+│                                                                  │
+│ { type: "agent_start" }                                         │
+│       ↓                                                          │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ Turn (对话轮次)                                              │ │
+│ │                                                              │ │
+│ │ { type: "turn_start" }                                      │ │
+│ │       ↓                                                      │ │
+│ │ ┌─────────────────────────────────────────────────────────┐ │ │
+│ │ │ Message (消息)                                          │ │ │
+│ │ │                                                         │ │ │
+│ │ │ { type: "message_start" }                              │ │ │
+│ │ │       ↓                                                 │ │ │
+│ │ │ { type: "message_update"; assistantMessageEvent: ... } │ │ │
+│ │ │   ├── { type: "text_start" }                           │ │ │
+│ │ │   ├── { type: "text_delta"; delta: "..." }             │ │ │
+│ │ │   ├── { type: "text_end"; content: "..." }             │ │ │
+│ │ │   ├── { type: "thinking_start" }                       │ │ │
+│ │ │   ├── { type: "thinking_delta"; delta: "..." }         │ │ │
+│ │ │   ├── { type: "thinking_end"; content: "..." }         │ │ │
+│ │ │   ├── { type: "toolcall_start" }                       │ │ │
+│ │ │   ├── { type: "toolcall_delta"; delta: "..." }         │ │ │
+│ │ │   └── { type: "toolcall_end" }                         │ │ │
+│ │ │       ↓                                                 │ │ │
+│ │ │ { type: "message_end" }  ← 消息结束，但工具可能还在执行 │ │ │
+│ │ └─────────────────────────────────────────────────────────┘ │ │
+│ │       ↓                                                      │ │
+│ │ ┌─────────────────────────────────────────────────────────┐ │ │
+│ │ │ Tool Execution (工具执行 - 在 message_end 之后)         │ │ │
+│ │ │                                                         │ │ │
+│ │ │ { type: "tool_execution_start"; toolName: "..." }      │ │ │
+│ │ │ { type: "tool_execution_update" }                      │ │ │
+│ │ │ { type: "tool_execution_end"; result: "..." }          │ │ │
+│ │ └─────────────────────────────────────────────────────────┘ │ │
+│ │       ↓                                                      │ │
+│ │ { type: "turn_end" }  ← 轮次结束，但可能还有新轮次         │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│       ↓                                                          │
+│ { type: "agent_end"; messages: AgentMessage[] }  ← 会话结束    │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+### 事件详细说明
+
+| 层级        | 事件类型                 | 含义                             | 包含内容                          |
+| ----------- | ------------------------ | -------------------------------- | --------------------------------- |
+| **Agent**   | `agent_start`            | Agent 会话开始                   | -                                 |
+|             | `agent_end` { messages } | **Agent 会话结束，包含所有消息** | 所有对话消息的完整数组            |
+| **Turn**    | `turn_start`             | 对话轮次开始                     | -                                 |
+|             | `turn_end`               | 对话轮次结束                     | 包含本轮消息和工具结果            |
+| **Message** | `message_start`          | 消息开始                         | 消息对象                          |
+|             | `message_update`         | 流式更新                         | 增量内容 (text/thinking/toolcall) |
+|             | `message_end`            | 消息结束                         | 消息对象                          |
+| **Tool**    | `tool_execution_start`   | 工具执行开始                     | 工具名、参数                      |
+|             | `tool_execution_update`  | 工具执行中                       | 部分结果                          |
+|             | `tool_execution_end`     | 工具执行结束                     | 执行结果                          |
+
+### 关键洞察
+
+1. **message_end 不等于完成**：收到 `message_end` 时，工具可能还在执行
+2. **turn_end 不等于会话结束**：`turn_end` 后可能还有新的 `turn_start`
+3. **agent_end 是真正的结束**：包含完整的 `messages` 数组，可直接提取内容
+
+---
 
 ## 核心区别对比
 
-| 特性 | HTTP | WebSocket |
-|------|------|-----------|
-| **订阅时机** | 调用 `prompt()` **之后**订阅 | 连接建立时**立即**订阅 |
-| **等待方式** | `await waitForSessionComplete()` 阻塞等待 | 在事件回调中处理 |
-| **`message_end` 处理** | 订阅还没开始，等待事件到来 | 订阅已存在，**在回调中**收到事件 |
-| **文件读取时机** | `waitForSessionComplete` 返回后读取 | 在 `message_end` 回调中读取 |
-| **响应方式** | 一次性返回完整结果 | 流式推送实时更新 |
+| 特性         | HTTP                                      | WebSocket                              |
+| ------------ | ----------------------------------------- | -------------------------------------- |
+| **订阅时机** | `session.prompt()` **之后**才订阅         | 连接建立时**立即**订阅                 |
+| **等待方式** | `await waitForSessionComplete()` 阻塞等待 | 在事件回调中处理                       |
+| **等待事件** | `message_end` 或 `isStreaming=false`      | `agent_end`                            |
+| **内容来源** | 从 `agent_end.messages` 提取              | 从 `agent_end.message` 提取 或文件读取 |
+| **响应方式** | 一次性返回完整结果                        | 流式推送实时更新                       |
+
+---
 
 ## 详细流程分析
 
 ### HTTP 方式（阻塞式）
 
 ```
-用户请求 → HTTP 服务器
-    ↓
-session.prompt(message)  ← 触发 AI 开始工作
-    ↓
-【此时开始订阅事件】
-session.subscribe((event) => {
-  if (event.type === "message_end") {
-    resolve()  ← 等待这个事件
-  }
-})
-    ↓
-【等待中...】AI 产生一系列事件：
-  - message_start
-  - message_update (text_delta) × N
-  - message_end ← 收到！resolve()
-    ↓
-读取文件 → 返回响应
+1. 用户请求 → HTTP 服务器
+2. session.prompt(message)  ← 触发 AI 开始工作
+3. waitForSessionComplete() 开始订阅事件
+4. 等待事件...
+   - message_start
+   - message_update (text_delta) × N
+   - message_end ← 旧代码只等这个！
+   - tool_execution_start ← 工具开始执行
+   - tool_execution_end ← 工具执行完成
+   - turn_end
+   - agent_end ← 新代码等待这个！
+5. 从 event.messages 提取内容
+6. 返回响应
 ```
 
-**代码位置：** `server.ts` 第 486-489 行
-```typescript
-await session.prompt(message);
-
-// 等待 session 完成（message_end 事件或 isStreaming 为 false）
-await waitForSessionComplete(session, logger);
-```
+**旧代码问题**：等待 `message_end` 就返回，但工具还在执行
 
 ### WebSocket 方式（事件驱动）
 
 ```
-WebSocket 连接建立
-    ↓
-【立即订阅事件】session.subscribe() ← 第772行
-    ↓
-用户发送消息 → session.prompt(message)
-    ↓
-【实时接收事件】AI 产生的事件实时推送：
-  - message_start → 推送给前端
-  - message_update (text_delta) → 推送给前端
-  - message_update (text_delta) → 推送给前端
-  ...
-  - message_end ← 我们在这里！
-    ↓
-【问题】在 message_end 回调里尝试读取文件
-         但此时订阅已经建立了，事件正在处理中
+1. WebSocket 连接建立
+2. session.subscribe() ← 立即订阅
+3. 用户发送消息 → session.prompt(message)
+4. 实时接收事件：
+   - message_start → 推送 response_start
+   - message_update (text_delta) → 推送 text_delta
+   - message_end ← 旧代码在这里发送 response_end
+   - tool_execution_start ← 工具开始
+   - tool_execution_end ← 工具结束
+   - turn_end
+   - agent_end ← 新代码等待这个
+5. 推送 response_end
 ```
 
-**代码位置：** `server.ts` 第 772 行
-```typescript
-// WebSocket 连接建立时立即订阅
-session.subscribe((event) => {
-  if (event.type === "message_end") {
-    // 在回调中处理 message_end
-    // 尝试读取文件...
-  }
-});
-```
+**旧代码问题**：
 
-## 为什么 waitForSessionComplete 在 WebSocket 中无效？
+- 快速拒绝时 `message_start` → `message_end` < 300ms
+- 工具还在执行就发送 `response_end`
+- `turn_end` 后可能还有新轮次
 
-### 问题演示
+---
 
-```typescript
-// WebSocket 的订阅（第772行）
-session.subscribe((event) => {
-  if (event.type === "message_end") {
-    // 我们在这里！
-    // 如果调用 waitForSessionComplete...
-  }
-})
+## 为什么等待 message_end 有问题
 
-// waitForSessionComplete 内部也是
-session.subscribe((event) => {
-  if (event.type === "message_end") {
-    resolve()  // 但事件已经触发过了！
-  }
-})
-```
-
-### 时序问题
+### 问题 1：工具还在执行
 
 ```
-时间线：
-t0: WebSocket 订阅事件（第772行）
-t1: 用户发送消息
-t2: session.prompt(message) 触发
-t3: AI 开始工作...
-t4: message_end 事件触发
+message_end ← 我们以为完成了
     ↓
-    WebSocket 收到 message_end
-    进入回调处理
+tool_execution_start ← 但工具刚开始执行！
     ↓
-    调用 waitForSessionComplete()
+tool_execution_end ← 工具执行中...
     ↓
-    waitForSessionComplete 内部订阅事件
-    但 message_end 已经触发过了！
-    ↓
-    等待下一个 message_end（永远不会来）
-    或者超时失败
+(此时前端已经收到 response_end，认为会话结束)
 ```
 
-**关键点：** 当我们在 WebSocket 的 `message_end` 回调中调用 `waitForSessionComplete` 时，`message_end` 事件**已经触发并且正在处理中**。新订阅的 `waitForSessionComplete` 会等待**下一个** `message_end` 事件，但当前 Turn 只有一个 `message_end`。
+### 问题 2：多轮对话
 
-## 正确的解决方案
+```
+turn_end ← 我们以为完成了
+    ↓
+turn_start ← 但新轮次开始了！
+    ↓
+message_start → message_update → message_end
+    ↓
+(前端刚收到 response_end，又收到新消息)
+```
 
-### 使用重试机制
+### 问题 3：快速拒绝
 
-由于 `message_end` 事件已触发，但文件可能还未完全写入，应该使用**重试机制**而不是等待事件：
+```
+message_start
+    ↓
+message_end ← 33ms，模型快速拒绝
+    ↓
+message_start ← 重新开始
+    ↓
+... ← 这次才有实际内容
+```
+
+---
+
+## 正确解决方案：等待 agent_end
+
+### 优势
+
+1. **完整的消息**：`agent_end` 包含所有消息，可直接提取
+2. **真正结束**：只有 `agent_end` 才表示整个会话完成
+3. **一致性**：HTTP 和 WebSocket 使用相同逻辑
+
+### 实现代码
+
+**HTTP (server.ts:335-402)**
 
 ```typescript
-// message_end 事件已触发，但文件可能还未完全写入
-// 使用重试机制读取文件，避免因时序问题导致失败
-const maxRetries = 5;
-const retryDelay = 100; // 100ms
+async function waitForSessionComplete(
+  session: AgentSession,
+  logger?: { log: (msg: string) => void },
+): Promise<{ messages: any[] }> {
+  return new Promise((resolve, reject) => {
+    // 等待 agent_end
+    unsubscribe = session.subscribe((event) => {
+      if (event.type === "agent_end") {
+        resolve({ messages: (event as any).messages || [] });
+      }
+    });
+  });
+}
+```
 
-for (let attempt = 1; attempt <= maxRetries; attempt++) {
-  try {
-    const fullTextResponse = await getLastAssistantMessageFromFile(
-      sessionFilePath,
-      logger,
-    );
-    const generatedContent = extractFromSessionText(
-      fullTextResponse,
-      logger,
-    );
+**WebSocket (server.ts:945-1010)**
 
-    ws.send(
-      JSON.stringify({
-        type: "response_end",
-        generatedContent: generatedContent,
-      }),
-    );
-    break; // 成功，退出重试循环
-  } catch (error: any) {
-    if (attempt === maxRetries) {
-      // 最后一次重试失败
-      logger.log(
-        `[SESSION] 读取文件失败（已重试 ${maxRetries} 次）: ${error.message}`,
-      );
-      ws.send(
-        JSON.stringify({
-          type: "response_end",
-          generatedContent: undefined,
-        }),
-      );
-    } else {
-      // 等待后重试
-      await new Promise((resolve) => setTimeout(resolve, retryDelay));
-    }
+```typescript
+if (event.type === "agent_end" && !hasSentResponseEnd) {
+  // 从 event.message 提取内容并发送 response_end
+}
+```
+
+---
+
+## HTTP 和 WebSocket 统一方案
+
+### 事件等待策略
+
+| 事件            | HTTP 行为         | WebSocket 行为    | 说明             |
+| --------------- | ----------------- | ----------------- | ---------------- |
+| `message_start` | 记录时间          | 记录时间          | 用于检测快速拒绝 |
+| `message_end`   | 跳过              | 跳过              | 工具可能还在执行 |
+| `turn_end`      | 跳过              | 跳过              | 可能还有新轮次   |
+| `agent_end`     | ✅ 提取内容并返回 | ✅ 提取内容并发送 | 真正结束         |
+
+### 内容提取策略
+
+1. **首选**：`agent_end` 事件中直接提取
+   - HTTP: `event.messages`
+   - WebSocket: `event.message`
+
+2. **后备**：从文件读取
+   - `getLastAssistantMessageFromFile()`
+
+### 快速拒绝处理
+
+```typescript
+if (event.type === "message_start") {
+  (ws as any).data.messageStartTime = Date.now();
+}
+
+if (event.type === "message_end") {
+  const elapsed = Date.now() - messageStartTime;
+  if (elapsed < 300 && !hasSentResponseStart) {
+    // 快速拒绝，跳过并等待新消息
+    return;
   }
 }
 ```
 
-### 为什么重试机制有效？
-
-1. **不依赖事件**：直接尝试读取文件，不等待新的事件
-2. **给 PI SDK 时间**：每次重试间隔 100ms，给 PI SDK 时间完成文件写入
-3. **有限重试**：最多重试 5 次，避免无限等待
-4. **优雅降级**：如果最终还是失败，返回 `undefined` 而不是阻塞
+---
 
 ## 总结
 
-| 场景 | 解决方案 | 原因 |
-|------|----------|------|
-| **HTTP** | `await waitForSessionComplete()` | 订阅在 `prompt()` 之后，等待 `message_end` 事件 |
-| **WebSocket** | 重试机制 | 订阅在连接时，`message_end` 已触发，无法等待 |
+| 场景               | 旧方案                               | 新方案                |
+| ------------------ | ------------------------------------ | --------------------- |
+| **HTTP 等待**      | `message_end` 或 `isStreaming=false` | `agent_end`           |
+| **WebSocket 发送** | `message_end` 时                     | `agent_end` 时        |
+| **内容来源**       | 从文件读取                           | 从事件提取 + 文件后备 |
+| **快速拒绝**       | 无处理                               | 检测 < 300ms 并跳过   |
+
+---
 
 ## 相关文件
 
 - `server.ts` - HTTP 和 WebSocket 实现
+  - HTTP: 行 335-402 (`waitForSessionComplete`)
+  - HTTP: 行 515-570 (消息处理)
+  - WebSocket: 行 820-1010 (事件订阅)
 - `docs/pi-sdk-event-structure.md` - PI SDK 事件结构详解
-- `docs/http-api-timeout-refactor.md` - HTTP API 超时处理重构
+- `docs/websocket-generation-debug.md` - WebSocket 问题排查
