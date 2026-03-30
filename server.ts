@@ -330,28 +330,27 @@ const SESSION_TIMEOUT_MS = parseInt(
 );
 
 /**
- * 等待 Session 完成执行（message_end 事件或 isStreaming 为 false）
+ * 等待 Session 完成执行（等待 agent_end 事件）
+ * agent_end 是最外层事件，表示整个 Agent 会话结束
+ * 包含所有消息，可以直接从中提取内容
  */
 async function waitForSessionComplete(
   session: AgentSession,
   logger?: { log: (msg: string) => void },
-): Promise<void> {
+): Promise<{ messages: any[] }> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
     let resolved = false;
     let unsubscribe: () => void;
 
-    //超时关闭
+    // 超时关闭
     const timer = setTimeout(() => {
       if (resolved) return;
       resolved = true;
 
-      // 确保清理所有资源
       try {
         if (unsubscribe) unsubscribe();
-      } catch (e) {
-        // 忽略清理错误
-      }
+      } catch (e) {}
       clearInterval(checkInterval);
 
       reject(
@@ -361,22 +360,21 @@ async function waitForSessionComplete(
       );
     }, SESSION_TIMEOUT_MS);
 
-    //成功关闭
+    // 成功关闭 - 等待 agent_end（整个会话结束）
     unsubscribe = session.subscribe((event) => {
-      if (event.type === "message_end") {
+      if (event.type === "agent_end") {
         if (resolved) return;
         resolved = true;
         clearTimeout(timer);
         clearInterval(checkInterval);
         try {
           unsubscribe();
-        } catch (e) {
-          // 忽略清理错误
-        }
+        } catch (e) {}
         logger?.log(
-          `[SESSION] message_end 收到，耗时: ${Date.now() - startTime}ms`,
+          `[SESSION] agent_end 收到，耗时: ${Date.now() - startTime}ms`,
         );
-        resolve();
+        // 返回所有消息，供调用方提取内容
+        resolve({ messages: (event as any).messages || [] });
       }
     });
 
@@ -389,13 +387,12 @@ async function waitForSessionComplete(
         clearInterval(checkInterval);
         try {
           unsubscribe();
-        } catch (e) {
-          // 忽略清理错误
-        }
+        } catch (e) {}
         logger?.log(
           `[SESSION] isStreaming=false，耗时: ${Date.now() - startTime}ms`,
         );
-        resolve();
+        // 返回空消息数组
+        resolve({ messages: [] });
       }
     }, 500);
   });
@@ -423,8 +420,8 @@ async function getLastAssistantMessageFromFile(
           // 提取所有 text 类型的 content
           const textParts =
             data.message.content
-              ?.filter((c: any) => c.type === "text")
-              .map((c: any) => c.text) || [];
+              ?.filter((c: any) => c.type === "text" || c.type === "thinking")
+              .map((c: any) => (c.type === "thinking" ? c.thinking : c.text)) || [];
 
           logger?.log(
             `[SESSION] 从文件读取最后一条 assistant 消息，长度: ${textParts.join("").length}`,
@@ -516,9 +513,11 @@ async function handleApiMessage(req: Request): Promise<Response> {
 
     await session.prompt(message);
 
-    // 等待 session 完成（message_end 事件或 isStreaming 为 false）
+    // 等待 session 完成（agent_end 事件或 isStreaming 为 false）
+    let sessionMessages: any[] = [];
     try {
-      await waitForSessionComplete(session, logger);
+      const result = await waitForSessionComplete(session, logger);
+      sessionMessages = result.messages;
     } catch (error: any) {
       if (error.message.includes("超时")) {
         logger.log(`[ERROR] Session 处理超时`);
@@ -535,21 +534,33 @@ async function handleApiMessage(req: Request): Promise<Response> {
       saveSessionMeta(usedSessionId, message, sessionFilePath);
     }
 
-    // ✅ 从 Session 文件读取完整的 assistant 消息
-    if (!sessionFilePath) {
-      return Response.json(
-        { error: "Session 文件路径不存在" },
-        { status: 500, headers: corsHeaders },
-      );
+    // ✅ 从 agent_end 事件的 messages 字段提取最终内容
+    const assistantMessages = sessionMessages.filter(
+      (m) => m.role === "assistant",
+    );
+    const lastMessage = assistantMessages[assistantMessages.length - 1];
+    
+    let fullTextResponse = "";
+    let generatedContent: string | undefined = "";
+    
+    if (lastMessage?.content) {
+      const textParts = lastMessage.content
+        .filter((c: any) => c.type === "text" || c.type === "thinking")
+        .map((c: any) => (c.type === "thinking" ? c.thinking : c.text)) || [];
+      fullTextResponse = textParts.join("");
     }
 
-    const fullTextResponse = await getLastAssistantMessageFromFile(
-      sessionFilePath,
-      logger,
-    );
-
     // 从完整文本中提取最终内容
-    const generatedContent = extractFromSessionText(fullTextResponse, logger);
+    generatedContent = extractFromSessionText(fullTextResponse, logger);
+
+    // 如果事件中没有内容，尝试从文件读取（后备方案）
+    if (!fullTextResponse && sessionFilePath) {
+      fullTextResponse = await getLastAssistantMessageFromFile(
+        sessionFilePath,
+        logger,
+      );
+      generatedContent = extractFromSessionText(fullTextResponse, logger);
+    }
 
     logger.log(
       `[HTTP OUT] Status: 200 | SessionID: ${usedSessionId} | ResponseLength: ${fullTextResponse.length} | HasGeneratedContent: ${!!generatedContent} | Duration: ${Date.now() - startTime}ms`,
@@ -814,10 +825,28 @@ const server = Bun.serve({
         const textDeltas: string[] = [];
         // 防止 message_end 并发处理的标志位
         let isProcessingMessageEnd = false;
+        let hasSentResponseEnd = false;
 
         // 保存 unsubscribe 函数以便在连接关闭时清理
         const unsubscribe = session.subscribe((event) => {
           logger.log(`[EVENT] Type: ${event.type}`);
+
+          // 记录 message_start 时间，用于检测快速拒绝
+          if (event.type === "message_start") {
+            (ws as any).data.messageStartTime = Date.now();
+          }
+
+          // 检测快速拒绝：如果 message_start 到 message_end < 300ms，认为是被模型过滤
+          if (event.type === "message_end") {
+            const messageStartTime = (ws as any).data.messageStartTime;
+            const elapsed = messageStartTime ? Date.now() - messageStartTime : 0;
+            
+            if (elapsed < 300 && !hasSentResponseStart) {
+              logger.log(`[SESSION] 检测到快速拒绝 (${elapsed}ms)，跳过并等待新消息`);
+              (ws as any).data.messageStartTime = null;
+              return; // 跳过这个空的 message_end，等待后续
+            }
+          }
 
           if (event.type === "message_update") {
             if (!hasSentResponseStart) {
@@ -834,6 +863,30 @@ const server = Bun.serve({
                 JSON.stringify({
                   type: "text_delta",
                   delta: event.assistantMessageEvent.delta,
+                }),
+              );
+            } else if (event.assistantMessageEvent.type === "thinking_start") {
+              logger.log(`[THINKING_START] ContentIndex: ${event.assistantMessageEvent.contentIndex}`);
+              ws.send(
+                JSON.stringify({
+                  type: "thinking_start",
+                  contentIndex: event.assistantMessageEvent.contentIndex,
+                }),
+              );
+            } else if (event.assistantMessageEvent.type === "thinking_delta") {
+              ws.send(
+                JSON.stringify({
+                  type: "thinking_delta",
+                  delta: event.assistantMessageEvent.delta,
+                }),
+              );
+            } else if (event.assistantMessageEvent.type === "thinking_end") {
+              logger.log(`[THINKING_END] ContentIndex: ${event.assistantMessageEvent.contentIndex}`);
+              ws.send(
+                JSON.stringify({
+                  type: "thinking_end",
+                  contentIndex: event.assistantMessageEvent.contentIndex,
+                  content: event.assistantMessageEvent.content,
                 }),
               );
             } else if (event.assistantMessageEvent.type === "toolcall_start") {
@@ -895,89 +948,48 @@ const server = Bun.serve({
               return;
             }
 
+            // 只标记 message_end 已处理，不发送 response_end
+            // 等待 turn_end 或 agent_end 再发送 response_end
             isProcessingMessageEnd = true;
-            hasSentResponseStart = false;
+            logger.log("[SESSION] message_end 收到，等待 turn_end");
+            isProcessingMessageEnd = false;
+          }
 
-            // 等待 Session 完成后再读取文件（避免时序竞态条件）
+          // turn_end: 记录日志，不发送 response_end（可能还有新轮次）
+          if (event.type === "turn_end") {
+            logger.log("[SESSION] turn_end 收到，等待 agent_end");
+          }
+
+          // agent_end: 整个 Agent 执行结束，发送 response_end
+          if (event.type === "agent_end" && !hasSentResponseEnd) {
+            logger.log("[SESSION] agent_end 收到，发送 response_end");
+            hasSentResponseEnd = true;
+            hasSentResponseStart = false;
+            
             const sessionFilePath = session.sessionFile;
             if (!sessionFilePath) {
-              logger.log("[SESSION] Session 文件路径不存在");
               ws.send(
                 JSON.stringify({
                   type: "response_end",
                   generatedContent: undefined,
                 }),
               );
-              textDeltas.length = 0;
-              isProcessingMessageEnd = false;
-              return;
+            } else {
+              void (async () => {
+                const fullTextResponse = await getLastAssistantMessageFromFile(
+                  sessionFilePath,
+                  logger,
+                );
+                const generatedContent = extractFromSessionText(fullTextResponse);
+                ws.send(
+                  JSON.stringify({
+                    type: "response_end",
+                    generatedContent,
+                  }),
+                );
+                textDeltas.length = 0;
+              })();
             }
-
-            // message_end 事件已触发，但文件可能还未完全写入
-            // 使用重试机制读取文件，避免因时序问题导致失败
-            void (async () => {
-              const maxRetries = 5;
-              let retryDelay = 50; // 初始延迟更短
-
-              for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                // 检查 WebSocket 是否仍然连接
-                if (ws.readyState !== WebSocket.OPEN) {
-                  logger.log(`[SESSION] WebSocket 已关闭，停止重试`);
-                  isProcessingMessageEnd = false;
-                  return;
-                }
-
-                try {
-                  const fullTextResponse = await getLastAssistantMessageFromFile(
-                    sessionFilePath,
-                    logger,
-                  );
-                  const generatedContent = extractFromSessionText(
-                    fullTextResponse,
-                    logger,
-                  );
-
-                  // 再次检查连接状态
-                  if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(
-                      JSON.stringify({
-                        type: "response_end",
-                        generatedContent: generatedContent,
-                      }),
-                    );
-                  }
-                  break; // 成功，退出重试循环
-                } catch (error: any) {
-                  if (attempt === maxRetries) {
-                    // 最后一次重试失败
-                    logger.log(
-                      `[SESSION] 读取文件失败（已重试 ${maxRetries} 次）: ${error.message}`,
-                    );
-                    // 只在连接仍然打开时发送错误响应
-                    if (ws.readyState === WebSocket.OPEN) {
-                      ws.send(
-                        JSON.stringify({
-                          type: "response_end",
-                          generatedContent: undefined,
-                        }),
-                      );
-                    }
-                  } else {
-                    // 指数退避
-                    await new Promise((resolve) =>
-                      setTimeout(resolve, retryDelay),
-                    );
-                    retryDelay = Math.min(retryDelay * 2, 500); // 最大 500ms
-                  }
-                }
-              }
-
-              // 重置处理标志
-              isProcessingMessageEnd = false;
-            })();
-
-            // 清空 textDeltas 为下一条消息做准备
-            textDeltas.length = 0;
           }
         });
 

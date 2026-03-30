@@ -48,6 +48,9 @@ type WSMessage =
   | { type: "connected"; sessionId: string; message?: string }
   | { type: "session_switched"; sessionId: string }
   | { type: "text_delta"; delta: string }
+  | { type: "thinking_start"; contentIndex: number }
+  | { type: "thinking_delta"; delta: string }
+  | { type: "thinking_end"; contentIndex: number; content: string }
   | { type: "tool_call_delta"; tool: string; path: string; content: string; contentIndex: number }
   | { type: "tool_call_start"; tool: string; contentIndex: number }
   | { type: "tool_start"; tool: string; args: any }
@@ -160,6 +163,18 @@ function App() {
 
           case "response_start":
             setIsResponding(true);
+            break;
+
+          case "thinking_start":
+            console.log(`[THINKING_START] ContentIndex: ${data.contentIndex}`);
+            break;
+
+          case "thinking_delta":
+            console.log(`[THINKING_DELTA] ${data.delta.substring(0, 50)}...`);
+            break;
+
+          case "thinking_end":
+            console.log(`[THINKING_END] ContentIndex: ${data.contentIndex}, Length: ${data.content?.length || 0}`);
             break;
 
           case "response_end":
