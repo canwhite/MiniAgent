@@ -323,9 +323,9 @@ function generateSessionId(): string {
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT ?? "3000", 10) : 3000;
 
-// Session 超时配置（毫秒）
+// Session/HTTP 超时配置（毫秒）- 默认 8 分钟
 const SESSION_TIMEOUT_MS = parseInt(
-  process.env.SESSION_TIMEOUT_MS || "300000",
+  process.env.SESSION_TIMEOUT_MS || "480000",
   10,
 );
 

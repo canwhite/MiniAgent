@@ -59,6 +59,15 @@ export const SKILLS: SkillConfig[] = [
     source: "inline",
     disableModelInvocation: false,
   },
+  {
+    name: "json-output-optimizer",
+    description:
+      "JSON输出优化器 - 当用户要求返回JSON格式时，检查并修复输出结果，确保输出是合法且结构完整的JSON",
+    filePath: `${SKILLS_BASE_DIR}/json-output-optimizer/SKILL.md`,
+    baseDir: `${SKILLS_BASE_DIR}/json-output-optimizer`,
+    source: "inline",
+    disableModelInvocation: false,
+  },
 ];
 
 /**
