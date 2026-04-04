@@ -68,6 +68,15 @@ export const SKILLS: SkillConfig[] = [
     source: "inline",
     disableModelInvocation: false,
   },
+  {
+    name: "resume-optimizer",
+    description:
+      "ATS简历优化器 - 根据职位描述(JD)和个人能力，生成符合ATS解析要求的高匹配简历。采用格式标准化、自然语义关键词匹配、量化成就等2026年最佳实践",
+    filePath: `${SKILLS_BASE_DIR}/resume-optimizer/SKILL.md`,
+    baseDir: `${SKILLS_BASE_DIR}/resume-optimizer`,
+    source: "inline",
+    disableModelInvocation: false,
+  },
 ];
 
 /**
