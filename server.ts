@@ -25,6 +25,106 @@ import { SKILLS } from "./skills/index.js";
 import { systemPrompt } from "./prompts/index.js";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 
+// ==================== Think Tag Parser ====================
+/**
+ * 从 text_delta 中提取 think 标签内容和普通内容
+ *
+ * 返回：{ textDelta: string, thinkDelta?: string }
+ * - textDelta: 过滤掉 think 标签后的普通内容
+ * - thinkDelta: think 标签内的内容（如果有）
+ */
+interface ParsedDelta {
+  textDelta: string;
+  thinkDelta?: string;
+}
+
+interface ThinkParserState {
+  isInThinkTag: boolean;
+  pendingContent: string;
+  currentThinkContent: string;
+}
+
+const thinkParserStates = new Map<any, ThinkParserState>();
+
+function parseThinkTagsFromDelta(
+  delta: string,
+  ws: any,
+): ParsedDelta {
+  // 获取或初始化该连接的解析状态
+  let state = thinkParserStates.get(ws);
+  if (!state) {
+    state = {
+      isInThinkTag: false,
+      pendingContent: "",
+      currentThinkContent: ""
+    };
+    thinkParserStates.set(ws, state);
+  }
+
+  // 将新的增量添加到缓存
+  state.pendingContent += delta;
+
+  const result: ParsedDelta = { textDelta: "" };
+  let remaining = state.pendingContent;
+
+  // 处理所有可能的标签
+  while (remaining.length > 0) {
+    if (state.isInThinkTag) {
+      // 在 think 标签内，查找结束标签 </think>
+      const endTagIndex = remaining.indexOf("</think>");
+
+      if (endTagIndex !== -1) {
+        // 找到结束标签
+        const thinkContent = remaining.substring(0, endTagIndex);
+        state.currentThinkContent += thinkContent;
+        result.thinkDelta = state.currentThinkContent;
+
+        // 重置状态
+        remaining = remaining.substring(endTagIndex + "</think>".length);
+        state.isInThinkTag = false;
+        state.currentThinkContent = "";
+      } else {
+        // 仍在标签内，累积内容但不发送
+        state.currentThinkContent += remaining;
+        state.pendingContent = "";
+        return result; // 返回空，等待更多内容
+      }
+    } else {
+      // 在标签外，查找开始标签 <think
+      const startTagIndex = remaining.indexOf("<think");
+
+      if (startTagIndex !== -1) {
+        // 添加开始标签之前的内容作为普通文本
+        result.textDelta += remaining.substring(0, startTagIndex);
+
+        // 查找开始标签的结束位置 ">"
+        const tagEndIndex = remaining.indexOf(">", startTagIndex);
+        if (tagEndIndex !== -1) {
+          remaining = remaining.substring(tagEndIndex + 1);
+          state.isInThinkTag = true;
+        } else {
+          // 不完整的开始标签，保留到下次处理
+          state.pendingContent = remaining.substring(0, startTagIndex);
+          return result;
+        }
+      } else {
+        // 没有找到标签，所有内容都是普通文本
+        result.textDelta += remaining;
+        remaining = "";
+      }
+    }
+  }
+
+  // 更新缓存
+  state.pendingContent = remaining;
+  return result;
+}
+
+// 在 WebSocket 关闭时清理状态
+function cleanupThinkParserState(ws: any) {
+  thinkParserStates.delete(ws);
+}
+
 // ==================== 模型配置 ====================
 const MODEL_CONFIG = {
   apiKey:
@@ -854,13 +954,31 @@ const server = Bun.serve({
                 );
               }
               if (event.assistantMessageEvent.type === "text_delta") {
-                textDeltas.push(event.assistantMessageEvent.delta);
-                ws.send(
-                  JSON.stringify({
-                    type: "text_delta",
-                    delta: event.assistantMessageEvent.delta,
-                  }),
-                );
+                const rawDelta = event.assistantMessageEvent.delta;
+                textDeltas.push(rawDelta);
+
+                // 解析 think 标签
+                const { textDelta, thinkDelta } = parseThinkTagsFromDelta(rawDelta, ws);
+
+                // 发送普通文本内容（如果有）
+                if (textDelta) {
+                  ws.send(
+                    JSON.stringify({
+                      type: "text_delta",
+                      delta: textDelta,
+                    }),
+                  );
+                }
+
+                // 发送 think 内容（如果有）
+                if (thinkDelta) {
+                  ws.send(
+                    JSON.stringify({
+                      type: "think_block",
+                      content: thinkDelta,
+                    }),
+                  );
+                }
               } else if (
                 event.assistantMessageEvent.type === "thinking_start"
               ) {
@@ -1216,6 +1334,9 @@ const server = Bun.serve({
       const sessionId = (ws as any).data?.sessionId;
       const logger = (ws as any).data?.logger;
       console.log(`[WebSocket] 连接已关闭: ${sessionId}`);
+
+      // 清理 think 解析器状态
+      cleanupThinkParserState(ws);
 
       // 清理事件订阅，防止内存泄漏
       const unsubscribe = (ws as any).data?.unsubscribe;

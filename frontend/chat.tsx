@@ -31,7 +31,7 @@ marked.use({ renderer });
 
 type Message = {
   id: string;
-  role: "user" | "assistant" | "tool";
+  role: "user" | "assistant" | "tool" | "thinking";
   toolType?: "write" | "other";
   toolName?: string; // 工具名称
   toolArgs?: any; // 工具参数
@@ -59,6 +59,7 @@ type WSMessage =
   | { type: "tool_end"; tool: string; success: boolean; result: string }
   | { type: "response_start" }
   | { type: "response_end" }
+  | { type: "think_block"; content: string }
   | { type: "auth_success" }
   | { type: "error"; message: string };
 
@@ -135,6 +136,7 @@ function App() {
     messageId: null,
     contentIndex: null,
   });
+  const currentThinkMessageRef = useRef<{ id: string | null }>({ id: null });
   const lastScrollTopRef = useRef<number>(0);
 
   const connect = useCallback((retryCount = 0) => {
@@ -166,6 +168,8 @@ function App() {
           // message_start/message_end 控制停止按钮（每轮消息显示）
           case "message_start":
             setIsResponding(true);
+            streamingMessageIdRef.current = null;  // 重置文本流式消息引用
+            currentThinkMessageRef.current = { id: null };  // 重置 think 消息引用
             break;
 
           case "message_end":
@@ -191,6 +195,7 @@ function App() {
           case "response_end":
             setIsResponding(false);
             streamingMessageIdRef.current = null;
+            currentThinkMessageRef.current = { id: null };
             setMessages((prev) =>
               prev.map((msg) => ({ ...msg, isStreaming: false })),
             );
@@ -260,6 +265,32 @@ function App() {
                 prev.map((msg) =>
                   msg.id === streamingMessageIdRef.current
                     ? { ...msg, content: msg.content + data.delta }
+                    : msg,
+                ),
+              );
+            }
+            break;
+
+          case "think_block":
+            // 创建或更新 think 消息
+            if (!currentThinkMessageRef.current.id) {
+              const newId = crypto.randomUUID();
+              currentThinkMessageRef.current = { id: newId };
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: newId,
+                  role: "thinking",
+                  content: data.content,
+                  isStreaming: true,
+                },
+              ]);
+            } else {
+              // 更新现有的 think 消息
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === currentThinkMessageRef.current?.id
+                    ? { ...msg, content: data.content }
                     : msg,
                 ),
               );
@@ -478,6 +509,7 @@ function App() {
 
     // Reset streaming state
     streamingMessageIdRef.current = null;
+    currentThinkMessageRef.current = { id: null };
 
     wsRef.current.send(
       JSON.stringify({
@@ -511,6 +543,7 @@ function App() {
     setMessages([]);
     setSessionId("");
     streamingMessageIdRef.current = null;
+    currentThinkMessageRef.current = { id: null };
     connect();
   };
 
@@ -635,19 +668,38 @@ function App() {
 
       <div class="messages" ref={messagesContainerRef}>
         {messages.map((msg) => (
-          <div class={`message ${msg.role} ${msg.isLoading ? "loading" : ""}`} key={msg.id}>
-            <div class="avatar">
-              {msg.role === "user" ? "U" : msg.role === "tool" ? "T" : "AI"}
-            </div>
+          msg.role === "thinking" ? (
             <div
-              class="message-content"
-              dangerouslySetInnerHTML={{
-                __html: msg.role === "tool" && msg.toolType !== "write"
-                  ? msg.content.replace(/</g, "&lt;").replace(/>/g, "&gt;")
-                  : formatMessage(msg.content) + (msg.isLoading ? '<span class="loading-spinner"></span>' : '')
-              }}
-            />
-          </div>
+              key={msg.id}
+              class="mx-auto max-w-3xl rounded-lg bg-gray-100 p-4 my-2 border border-gray-200"
+            >
+              <details class="group" open={true}>
+                <summary class="cursor-pointer font-semibold text-gray-700 flex items-center gap-2 hover:text-gray-900">
+                  <span>💭 思考过程</span>
+                  <span class="text-xs text-gray-500">
+                    （点击展开/折叠）
+                  </span>
+                </summary>
+                <div class="mt-3 text-sm text-gray-600 whitespace-pre-wrap bg-white p-3 rounded border border-gray-200">
+                  {msg.content}
+                </div>
+              </details>
+            </div>
+          ) : (
+            <div class={`message ${msg.role} ${msg.isLoading ? "loading" : ""}`} key={msg.id}>
+              <div class="avatar">
+                {msg.role === "user" ? "U" : msg.role === "tool" ? "T" : "AI"}
+              </div>
+              <div
+                class="message-content"
+                dangerouslySetInnerHTML={{
+                  __html: msg.role === "tool" && msg.toolType !== "write"
+                    ? msg.content.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                    : formatMessage(msg.content) + (msg.isLoading ? '<span class="loading-spinner"></span>' : '')
+                }}
+              />
+            </div>
+          )
         ))}
         {messages.some(m => m.role === 'assistant') && (
           <button class="clear-btn" onClick={clearChat}>🧹 Clear</button>
