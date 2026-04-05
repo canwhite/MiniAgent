@@ -76,18 +76,18 @@ function parseThinkTagsFromDelta(
       if (endTagIndex !== -1) {
         // 找到结束标签
         const thinkContent = remaining.substring(0, endTagIndex);
-        state.currentThinkContent += thinkContent;
-        result.thinkDelta = state.currentThinkContent;
+        result.thinkDelta = thinkContent; // 只发送最后一段增量，不发送累积内容
 
         // 重置状态
         remaining = remaining.substring(endTagIndex + "</think>".length);
         state.isInThinkTag = false;
         state.currentThinkContent = "";
       } else {
-        // 仍在标签内，累积内容但不发送
+        // 仍在标签内，流式发送增量内容
+        result.thinkDelta = remaining; // 发送增量而非累积内容
         state.currentThinkContent += remaining;
         state.pendingContent = "";
-        return result; // 返回空，等待更多内容
+        return result;
       }
     } else {
       // 在标签外，查找开始标签 <think

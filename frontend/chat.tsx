@@ -286,11 +286,11 @@ function App() {
                 },
               ]);
             } else {
-              // 更新现有的 think 消息
+              // 更新现有的 think 消息 - 累积内容
               setMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === currentThinkMessageRef.current?.id
-                    ? { ...msg, content: data.content }
+                    ? { ...msg, content: msg.content + data.content }
                     : msg,
                 ),
               );
