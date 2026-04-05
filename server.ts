@@ -960,8 +960,8 @@ const server = Bun.serve({
                 // 解析 think 标签
                 const { textDelta, thinkDelta } = parseThinkTagsFromDelta(rawDelta, ws);
 
-                // 发送普通文本内容（如果有）
-                if (textDelta) {
+                // 发送普通文本内容（如果有实质内容）
+                if (textDelta && textDelta.trim().length > 0) {
                   ws.send(
                     JSON.stringify({
                       type: "text_delta",

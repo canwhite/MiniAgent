@@ -252,7 +252,7 @@ function App() {
 
           case "text_delta":
             if (!streamingMessageIdRef.current) {
-              // Create new streaming message
+              // 创建新流式消息（服务器端已确保有内容）
               const newId = crypto.randomUUID();
               streamingMessageIdRef.current = newId;
               setMessages((prev) => [
@@ -260,7 +260,7 @@ function App() {
                 { id: newId, role: "assistant", content: data.delta, isStreaming: true },
               ]);
             } else {
-              // Update existing streaming message
+              // 更新现有的流式消息
               setMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === streamingMessageIdRef.current
@@ -274,17 +274,20 @@ function App() {
           case "think_block":
             // 创建或更新 think 消息
             if (!currentThinkMessageRef.current.id) {
-              const newId = crypto.randomUUID();
-              currentThinkMessageRef.current = { id: newId };
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: newId,
-                  role: "thinking",
-                  content: data.content,
-                  isStreaming: true,
-                },
-              ]);
+              // 第一次有内容时才创建消息
+              if (data.content) {
+                const newId = crypto.randomUUID();
+                currentThinkMessageRef.current = { id: newId };
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: newId,
+                    role: "thinking",
+                    content: data.content,
+                    isStreaming: true,
+                  },
+                ]);
+              }
             } else {
               // 更新现有的 think 消息 - 累积内容
               setMessages((prev) =>
