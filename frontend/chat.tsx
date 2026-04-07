@@ -674,7 +674,7 @@ function App() {
           msg.role === "thinking" ? (
             <div
               key={msg.id}
-              class="mx-auto max-w-3xl rounded-lg bg-gray-100 p-4 my-2 border border-gray-200"
+              class="thinking-box"
             >
               <details class="group" open={true}>
                 <summary class="cursor-pointer font-semibold text-gray-700 flex items-center gap-2 hover:text-gray-900">
