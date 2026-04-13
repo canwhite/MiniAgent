@@ -373,3 +373,119 @@ function formatStreamingMessage(content: string): string {
 - 流式时不完整的代码块不会导致解析错误
 - 完整后自动显示完整 markdown 格式
 - 无需额外依赖
+
+---
+
+## 最终实施方案（2025-04-13）
+
+### 问题背景
+
+1. **Preact 兼容性问题**：react-markdown 与 Preact 不兼容（类型和运行时差异）
+2. **Bun JSX 构建问题**：在 JSX 中直接使用 `<ReactMarkdown>` 组件无法正确渲染
+3. **流式更新问题**：每次 content 变化都触发重渲染，可能导致 React 内部状态混乱
+
+### 最终方案
+
+#### 1. 从 Preact 迁移到 React
+
+**修改文件：**
+- `package.json`: `preact` → `react` + `react-dom`
+- `tsconfig.json`: `jsxImportSource: "preact"` → `"react"`
+- `server.ts`: `importSource: "preact"` → `"react"`
+- `frontend/chat.tsx`: 导入和语法调整
+
+#### 2. 使用 createRoot 动态渲染 react-markdown
+
+由于 Bun 构建的 JSX 与 react-markdown 组件不兼容，采用官方推荐的 `createRoot` 动态渲染方式：
+
+```typescript
+import { createRoot } from "react-dom/client";
+import React, { useEffect, useRef, memo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import { flushSync } from "react-dom";
+
+// StreamingMarkdown 组件
+const StreamingMarkdown = memo(function StreamingMarkdown({
+  content,
+}: {
+  content: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    // 初始化 root（只执行一次）
+    if (!rootRef.current) {
+      rootRef.current = createRoot(containerRef.current);
+    }
+
+    // 使用 flushSync 强制同步更新，避免竞态
+    flushSync(() => {
+      rootRef.current.render(
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeHighlight]}
+        >
+          {content}
+        </ReactMarkdown>,
+      );
+    });
+  }, [content]);
+
+  // 组件卸载时清理
+  useEffect(() => {
+    return () => {
+      if (rootRef.current) {
+        rootRef.current.unmount();
+        rootRef.current = null;
+      }
+    };
+  }, []);
+
+  return <div ref={containerRef} />;
+});
+```
+
+#### 3. 流式期间显示策略
+
+为避免流式期间内容不完整导致渲染问题，采用以下策略：
+
+```typescript
+// 流式期间：显示纯文本
+// 流式结束后：用 react-markdown 渲染
+{msg.isStreaming ? (
+  <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
+) : (
+  <StreamingMarkdown content={msg.content} />
+)}
+```
+
+### 依赖包
+
+```json
+{
+  "react": "^19.0.0",
+  "react-dom": "^19.0.0",
+  "react-markdown": "^10.1.0",
+  "rehype-highlight": "^7.0.2",
+  "remark-gfm": "^4.0.1"
+}
+```
+
+### 关键点
+
+1. **createRoot 动态渲染**：绕过 Bun JSX 构建问题
+2. **flushSync 同步更新**：避免流式更新时的竞态条件
+3. **memo 优化**：避免不必要的重渲染
+4. **流式期间纯文本**：确保内容完整后才渲染 markdown
+
+### 效果
+
+- ✅ Markdown 正确渲染（标题、表格、代码块等）
+- ✅ 语法高亮正常工作
+- ✅ 流式更新相对稳定
+- ✅ GFM（GitHub Flavored Markdown）支持
