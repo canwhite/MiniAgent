@@ -108,3 +108,57 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 
 - 改动之后记得测试
 - 测试的时候类型判断请用bunx，不要用其他方式
+
+## React 编码规范
+
+编写 React 组件时，**禁止直接使用 useEffect**，使用以下替代模式：
+
+### 规则 1：派生状态
+```tsx
+// ❌ 差
+const [filteredProducts, setFilteredProducts] = useState([]);
+useEffect(() => {
+  setFilteredProducts(products.filter((p) => p.inStock));
+}, [products]);
+
+// ✅ 好
+const filteredProducts = products.filter((p) => p.inStock);
+```
+
+### 规则 2：使用数据获取库
+```tsx
+// ❌ 差
+useEffect(() => {
+  fetchProduct(productId).then(setProduct);
+}, [productId]);
+
+// ✅ 好 - 使用 TanStack Query
+const { data: product } = useQuery(["product", productId], () => fetchProduct(productId));
+```
+
+### 规则 3：事件处理器
+```tsx
+// ❌ 差
+useEffect(() => {
+  if (liked) { postLike(); setLiked(false); }
+}, [liked]);
+<button onClick={() => setLiked(true)}>Like</button>
+
+// ✅ 好
+<button onClick={() => postLike()}>Like</button>
+```
+
+### 规则 4：useMountEffect（一次性外部同步）
+```tsx
+function useMountEffect(callback: () => void | (() => void)) {
+  useEffect(callback, []);
+}
+
+// 适用场景：DOM 集成、第三方 widget、浏览器 API 订阅
+```
+
+### 规则 5：用 key 重置
+```tsx
+// 用 key 强制重置组件
+<VideoPlayer key={videoId} videoId={videoId} />
+```

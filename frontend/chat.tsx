@@ -112,27 +112,54 @@ function formatToolCard(
   return card;
 }
 
-// 流式时的格式化（尝试解析 markdown，失败则回退到简单格式）
+// 检测不完整的 markdown 结构
+function isIncompleteMarkdown(content: string): boolean {
+  // 检查未闭合的代码块
+  const codeBlockCount = (content.match(/```/g) || []).length;
+  if (codeBlockCount % 2 !== 0) return true;
+
+  // 检查未闭合的行内代码
+  const inlineCodeCount = (content.match(/(?<!`)(`+)(?!`)/g) || []).length;
+  if (content.includes("`") && inlineCodeCount % 2 !== 0) return true;
+
+  return false;
+}
+
+// 流式时的格式化（检测不完整结构，使用简单格式）
 function formatStreamingMessage(content: string): string {
-  try {
-    // 尝试解析 markdown
-    const parsed = marked.parse(content) as string;
-    // 净化 HTML
-    return DOMPurify.sanitize(parsed);
-  } catch (e) {
-    // 如果解析失败，回退到简单格式化
+  // 检测不完整的 markdown 结构
+  if (isIncompleteMarkdown(content)) {
+    // 不完整时使用简单格式化
     let formatted = content
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
 
     // 处理行内代码
-    formatted = formatted.replace(/`([^`]+)`/g, "<code>$1</code>");
+    formatted = formatted.replace(/`([^`\n]+)`/g, "<code>$1</code>");
 
     // 处理粗体
     formatted = formatted.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 
     // 处理斜体
+    formatted = formatted.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+    return `<div class="streaming">${formatted.replace(/\n/g, "<br>")}</div>`;
+  }
+
+  try {
+    // 完整时尝试解析 markdown
+    const parsed = marked.parse(content) as string;
+    return DOMPurify.sanitize(parsed);
+  } catch (e) {
+    // 解析失败，回退到简单格式化
+    let formatted = content
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    formatted = formatted.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     formatted = formatted.replace(/\*([^*]+)\*/g, "<em>$1</em>");
 
     return `<div class="streaming">${formatted.replace(/\n/g, "<br>")}</div>`;
