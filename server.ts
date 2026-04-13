@@ -13,6 +13,8 @@ import {
   createAgentSessionRuntime,
   AgentSessionRuntime,
   type CreateAgentSessionRuntimeFactory,
+  getAgentDir,
+  createAgentSessionServices,
 } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
@@ -262,7 +264,7 @@ function createAuthCookieHeaders() {
 }
 // ==================== API Token 认证结束 ====================
 
-const sessions = new Map<string, AgentSession>();
+const sessions = new Map<string, AgentSessionRuntime>();
 
 async function getSessionMessages(id: string) {
   const sessionMeta = getSessionById(id) as any;
@@ -319,13 +321,13 @@ async function getSessionMessages(id: string) {
   return { sessionId: sessionMeta.session_id, messages };
 }
 
-async function createSession(sessionId: string) {
-  const cwd = process.cwd();
+// 创建 runtime factory
+const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async (
+  options
+) => {
+  const cwd = options.cwd;
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
-
-  // Create sessionManager first and capture reference
-  const sessionManager = SessionManager.create(cwd, join(cwd, "sessions"));
 
   // 设置运行时 API Key（使用配置中的 provider 名称）
   authStorage.setRuntimeApiKey(MODEL_CONFIG.provider, MODEL_CONFIG.apiKey);
@@ -336,7 +338,7 @@ async function createSession(sessionId: string) {
     : getModel("anthropic", "claude-sonnet-4-20250514");
 
   const result = await createAgentSession({
-    cwd,
+    ...options,
     model,
     thinkingLevel: "off",
     authStorage,
@@ -347,7 +349,6 @@ async function createSession(sessionId: string) {
       createEditTool(cwd),
     ],
     customTools: TOOLS.map((t) => t.tool),
-    sessionManager,
     resourceLoader: {
       getExtensions: () => ({
         extensions: [],
@@ -374,8 +375,39 @@ async function createSession(sessionId: string) {
     },
   });
 
-  sessions.set(sessionId, result.session);
-  return { session: result.session };
+  // 创建 services 以返回完整的 RuntimeResult
+  const services = await createAgentSessionServices({
+    cwd,
+    agentDir: getAgentDir(),
+  });
+
+  return {
+    ...result,
+    services,
+    diagnostics: [],
+  };
+};
+
+async function createRuntime(sessionId: string, sessionPath?: string) {
+  const cwd = process.cwd();
+  const sessionManager = SessionManager.create(cwd, join(cwd, "sessions"));
+
+  const runtime = await createAgentSessionRuntime(createRuntimeFactory, {
+    cwd,
+    agentDir: getAgentDir(),
+    sessionManager,
+  });
+
+  // 如果指定了 sessionPath，切换到该会话
+  if (sessionPath) {
+    const result = await runtime.switchSession(sessionPath);
+    if (result.cancelled) {
+      throw new Error("Session 切换被取消");
+    }
+  }
+
+  sessions.set(sessionId, runtime);
+  return { runtime };
 }
 
 function getSession(sessionId: string) {
@@ -383,9 +415,10 @@ function getSession(sessionId: string) {
 }
 
 function deleteSession(sessionId: string) {
-  const session = sessions.get(sessionId);
-  if (session) {
+  const runtime = sessions.get(sessionId);
+  if (runtime) {
     try {
+      const session = runtime.session;
       // 检查 session 状态
       if (session.isStreaming) {
         console.log(`[DELETE] Session ${sessionId} 仍在运行，先终止`);
@@ -394,7 +427,7 @@ function deleteSession(sessionId: string) {
         });
       }
 
-      session.dispose();
+      runtime.dispose();
       sessions.delete(sessionId);
       console.log(`[DELETE] Session ${sessionId} 已清理`);
     } catch (error) {
@@ -581,7 +614,7 @@ async function handleApiMessage(req: Request): Promise<Response> {
     if (sessionId) {
       const existing = getSession(sessionId);
       if (existing) {
-        session = existing;
+        session = existing.session;
         usedSessionId = sessionId;
       } else {
         return Response.json(
@@ -591,8 +624,8 @@ async function handleApiMessage(req: Request): Promise<Response> {
       }
     } else {
       usedSessionId = generateSessionId();
-      const result = await createSession(usedSessionId);
-      session = result.session;
+      const result = await createRuntime(usedSessionId);
+      session = result.runtime.session;
     }
 
     // Get session file path from PI SDK (created when session is initialized)
@@ -677,7 +710,7 @@ async function handleCreateSession(): Promise<Response> {
   const logger = MonitorLogger.getInstance();
   const startTime = Date.now();
   const sessionId = generateSessionId();
-  await createSession(sessionId);
+  await createRuntime(sessionId);
   logger.log(
     `[HTTP OUT] Method: POST | Path: /api/sessions | Status: 200 | SessionID: ${sessionId} | Duration: ${Date.now() - startTime}ms`,
   );
@@ -893,9 +926,11 @@ const server = Bun.serve({
 
       logger.log(`[SESSION] Session ${sessionId} started, WebSocket opened`);
 
-      createSession(sessionId)
+      createRuntime(sessionId)
         .then((result) => {
-          const session = result.session;
+          const runtime = result.runtime;
+          const session = runtime.session;
+          (ws as any).data.runtime = runtime;
           (ws as any).data.session = session;
           (ws as any).data.firstMessageSaved = false;
           ws.send(
@@ -1180,9 +1215,9 @@ const server = Bun.serve({
         }
 
         const sessionId = (ws as any).data?.sessionId;
-        const session = getSession(sessionId!);
+        const runtime = getSession(sessionId!);
 
-        if (!session) {
+        if (!runtime) {
           ws.send(
             JSON.stringify({
               type: "error",
@@ -1191,6 +1226,8 @@ const server = Bun.serve({
           );
           return;
         }
+
+        const session = runtime.session;
 
         if (data.type === "stop") {
           console.log(`[WebSocket] 收到停止请求`);
@@ -1229,18 +1266,16 @@ const server = Bun.serve({
           (ws as any).data.isSwitchingSession = true;
 
           try {
-            // 创建新 session 替换当前 session（switchSession 已在 v0.65.0 移除）
-            const newSession = await createSession(data.sessionId);
-            if (newSession) {
-              // 关闭旧 session
-              try {
-                session.dispose();
-              } catch (e) {
-                console.log(`[WebSocket] 关闭旧 session 时出错:`, e);
-              }
+            // 使用 AgentSessionRuntime 的 switchSession 方法
+            const runtime = (ws as any).data.runtime as AgentSessionRuntime;
+            if (!runtime) {
+              throw new Error("Runtime 不存在");
+            }
 
+            const result = await runtime.switchSession(sessionMeta.file_path);
+            if (!result.cancelled) {
               // Update sessions Map mapping
-              sessions.set(data.sessionId, newSession.session);
+              sessions.set(data.sessionId, runtime);
 
               // Remove old sessionId mapping if different
               if (sessionId && sessionId !== data.sessionId) {
@@ -1250,6 +1285,7 @@ const server = Bun.serve({
               // Update the sessionId in ws.data
               (ws as any).data.sessionId = data.sessionId;
               (ws as any).data.firstMessageSaved = true; // Existing session, don't save meta again
+              (ws as any).data.session = runtime.session; // Update session reference
 
               ws.send(
                 JSON.stringify({
@@ -1262,7 +1298,7 @@ const server = Bun.serve({
               ws.send(
                 JSON.stringify({
                   type: "error",
-                  message: "切换 session 失败",
+                  message: "切换 session 被取消",
                 }),
               );
             }
