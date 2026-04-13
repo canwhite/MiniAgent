@@ -8,8 +8,10 @@ import {
   AuthStorage,
   ModelRegistry,
   createExtensionRuntime,
+  createSyntheticSourceInfo,
 } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
+import { getModel } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { SKILLS } from "../skills/index";
 
@@ -142,8 +144,8 @@ const systemPrompt = `你是一个专业的编程助手，可以帮助用户完�
 
 async function createSession() {
   const cwd = process.cwd();
-  const authStorage = new AuthStorage();
-  const modelRegistry = new ModelRegistry(authStorage);
+  const authStorage = AuthStorage.create();
+  const modelRegistry = ModelRegistry.create(authStorage);
 
   if (useDeepSeek) {
     authStorage.setRuntimeApiKey("deepseek", apiKey);
@@ -151,10 +153,7 @@ async function createSession() {
 
   const model = useDeepSeek
     ? createDeepSeekModel()
-    : (() => {
-        const { getModel } = require("@mariozechner/pi-ai");
-        return getModel("anthropic", "claude-sonnet-4-20250514");
-      })();
+    : getModel("anthropic", "claude-sonnet-4-20250514");
 
   const result = await createAgentSession({
     cwd,
@@ -174,7 +173,13 @@ async function createSession() {
         runtime: createExtensionRuntime(),
       }),
       getSkills: () => ({
-        skills: SKILLS,
+        skills: SKILLS.map((s) => ({
+          ...s,
+          sourceInfo: createSyntheticSourceInfo(s.filePath, {
+            source: s.source,
+            baseDir: s.baseDir,
+          }),
+        })),
         diagnostics: [],
       }),
       getPrompts: () => ({ prompts: [], diagnostics: [] }),
@@ -182,7 +187,6 @@ async function createSession() {
       getAgentsFiles: () => ({ agentsFiles: [] }),
       getSystemPrompt: () => systemPrompt,
       getAppendSystemPrompt: () => [],
-      getPathMetadata: () => new Map(),
       extendResources: () => {},
       reload: async () => {},
     },

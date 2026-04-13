@@ -1,5 +1,5 @@
 {
-  "name": "MiniAgent",
+  "name": "mini_agent",
   "version": "1.0.0",
   "description": "Simple Agent implementation based on pi-coding-agent",
   "module": "index.ts",
@@ -11,9 +11,9 @@
     "test": "bun run test-gateway.ts"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.51.5",
-    "@tintinweb/pi-subagents": "^0.5.2",
-    "@tintinweb/pi-tasks": "^0.4.2",
+    "@mariozechner/pi-ai": "^0.66.1",
+    "@mariozechner/pi-coding-agent": "^0.66.1",
+    "@sinclair/typebox": "^0.34.49",
     "dompurify": "^3.3.3",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.40",

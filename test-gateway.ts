@@ -2,8 +2,8 @@
  * MiniAgent Gateway API 测试套件
  */
 
-const BASE_URL = "http://localhost:6000";
-const WS_URL = "ws://localhost:6000/ws";
+const BASE_URL = "http://localhost:3333";
+const WS_URL = "ws://localhost:3333/ws";
 
 interface TestResult {
   name: string;

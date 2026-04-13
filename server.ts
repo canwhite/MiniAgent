@@ -9,8 +9,13 @@ import {
   AuthStorage,
   ModelRegistry,
   createExtensionRuntime,
+  createSyntheticSourceInfo,
+  createAgentSessionRuntime,
+  AgentSessionRuntime,
+  type CreateAgentSessionRuntimeFactory,
 } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
+import { getModel } from "@mariozechner/pi-ai";
 import { join } from "path";
 import { MonitorLogger } from "./lib/logger.js";
 import { extractFromSessionText } from "./lib/session-content-extractor.js";
@@ -316,8 +321,8 @@ async function getSessionMessages(id: string) {
 
 async function createSession(sessionId: string) {
   const cwd = process.cwd();
-  const authStorage = new AuthStorage();
-  const modelRegistry = new ModelRegistry(authStorage);
+  const authStorage = AuthStorage.create();
+  const modelRegistry = ModelRegistry.create(authStorage);
 
   // Create sessionManager first and capture reference
   const sessionManager = SessionManager.create(cwd, join(cwd, "sessions"));
@@ -326,7 +331,6 @@ async function createSession(sessionId: string) {
   authStorage.setRuntimeApiKey(MODEL_CONFIG.provider, MODEL_CONFIG.apiKey);
 
   // 选择模型：如果配置了 baseUrl 则使用自定义模型，否则使用内置 Claude 模型
-  const { getModel } = require("@mariozechner/pi-ai");
   const model = MODEL_CONFIG.baseUrl
     ? createModel()
     : getModel("anthropic", "claude-sonnet-4-20250514");
@@ -351,7 +355,13 @@ async function createSession(sessionId: string) {
         runtime: createExtensionRuntime(),
       }),
       getSkills: () => ({
-        skills: SKILLS,
+        skills: SKILLS.map((s) => ({
+          ...s,
+          sourceInfo: createSyntheticSourceInfo(s.filePath, {
+            source: s.source,
+            baseDir: s.baseDir,
+          }),
+        })),
         diagnostics: [],
       }),
       getPrompts: () => ({ prompts: [], diagnostics: [] }),
@@ -359,7 +369,6 @@ async function createSession(sessionId: string) {
       getAgentsFiles: () => ({ agentsFiles: [] }),
       getSystemPrompt: () => systemPrompt,
       getAppendSystemPrompt: () => [],
-      getPathMetadata: () => new Map(),
       extendResources: () => {},
       reload: async () => {},
     },
@@ -1220,10 +1229,18 @@ const server = Bun.serve({
           (ws as any).data.isSwitchingSession = true;
 
           try {
-            const success = await session.switchSession(sessionMeta.file_path);
-            if (success) {
+            // 创建新 session 替换当前 session（switchSession 已在 v0.65.0 移除）
+            const newSession = await createSession(data.sessionId);
+            if (newSession) {
+              // 关闭旧 session
+              try {
+                session.dispose();
+              } catch (e) {
+                console.log(`[WebSocket] 关闭旧 session 时出错:`, e);
+              }
+
               // Update sessions Map mapping
-              sessions.set(data.sessionId, session);
+              sessions.set(data.sessionId, newSession.session);
 
               // Remove old sessionId mapping if different
               if (sessionId && sessionId !== data.sessionId) {
