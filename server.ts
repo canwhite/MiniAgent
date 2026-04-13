@@ -654,7 +654,7 @@ function getSession(sessionId: string) {
   return sessions.get(sessionId);
 }
 
-function deleteSession(sessionId: string) {
+async function deleteSession(sessionId: string) {
   const runtime = sessions.get(sessionId);
   if (runtime) {
     try {
@@ -662,12 +662,12 @@ function deleteSession(sessionId: string) {
       // 检查 session 状态
       if (session.isStreaming) {
         console.log(`[DELETE] Session ${sessionId} 仍在运行，先终止`);
-        session.abort().catch(() => {
+        await session.abort().catch(() => {
           // 忽略 abort 错误
         });
       }
 
-      runtime.dispose();
+      await runtime.dispose();
       sessions.delete(sessionId);
       console.log(`[DELETE] Session ${sessionId} 已清理`);
     } catch (error) {
@@ -830,9 +830,13 @@ function getContentType(filePath: string): string {
 async function handleApiMessage(req: Request): Promise<Response> {
   const startTime = Date.now();
   const logger = MonitorLogger.getInstance();
+  let sessionId: string | undefined;
+  let usedSessionId: string | undefined;
+
   try {
     const body = (await req.json()) as { message?: string; sessionId?: string };
-    const { message, sessionId } = body;
+    sessionId = body.sessionId;
+    const { message } = body;
 
     logger.log(
       `[HTTP IN] Method: ${req.method} | Path: /api/messages | SessionID: ${sessionId || "(new)"} | Message: ${message?.substring(0, 100)}${message && message.length > 100 ? "..." : ""}`,
@@ -849,7 +853,6 @@ async function handleApiMessage(req: Request): Promise<Response> {
     }
 
     let session: AgentSession;
-    let usedSessionId: string;
 
     if (sessionId) {
       const existing = getSession(sessionId);
@@ -866,6 +869,8 @@ async function handleApiMessage(req: Request): Promise<Response> {
       usedSessionId = generateSessionId();
       const result = await createRuntime(usedSessionId);
       session = result.runtime.session;
+      // 标记为临时会话，请求完成后清理 (P1-2 修复)
+      (result.runtime as any).temporary = true;
     }
 
     // Get session file path from PI SDK (created when session is initialized)
@@ -927,6 +932,20 @@ async function handleApiMessage(req: Request): Promise<Response> {
       `[HTTP OUT] Status: 200 | SessionID: ${usedSessionId} | ResponseLength: ${fullTextResponse.length} | HasGeneratedContent: ${!!generatedContent} | Duration: ${Date.now() - startTime}ms`,
     );
 
+    // P1-2 修复: 清理临时会话（非 sessionId 参数创建的会话）
+    const cleanupPromise = (!sessionId && usedSessionId)
+      ? deleteSession(usedSessionId).catch((e) => {
+          console.error(`[HTTP] 清理临时会话失败: ${usedSessionId}`, e);
+        })
+      : Promise.resolve();
+
+    // 等待清理完成但不阻塞响应
+    cleanupPromise.then(() => {
+      if (!sessionId && usedSessionId) {
+        console.log(`[HTTP] 已清理临时会话: ${usedSessionId}`);
+      }
+    });
+
     return Response.json(
       {
         sessionId: usedSessionId,
@@ -936,6 +955,13 @@ async function handleApiMessage(req: Request): Promise<Response> {
       { headers: corsHeaders },
     );
   } catch (error: any) {
+    // P1-2 修复: 错误时也要清理临时会话
+    if (!sessionId && usedSessionId) {
+      deleteSession(usedSessionId).catch((e) => {
+        console.error(`[HTTP] 错误处理中清理临时会话失败: ${usedSessionId}`, e);
+      });
+    }
+
     logger.log(
       `[HTTP OUT] Status: 500 | Error: ${error.message} | Duration: ${Date.now() - startTime}ms`,
     );
@@ -1545,6 +1571,17 @@ const server = Bun.serve({
 
               // 为新 session 设置事件监听（复制原有的订阅逻辑）
               setupEventSubscriptionForSwitch(ws, newSession, (ws as any).data.logger);
+
+              // P1-1 修复: 检查目标 sessionId 是否已存在，清理旧 runtime
+              const existingRuntime = sessions.get(data.sessionId);
+              if (existingRuntime && existingRuntime !== runtime) {
+                try {
+                  existingRuntime.dispose();
+                  console.log(`[WebSocket] 已清理被覆盖的 runtime: ${data.sessionId}`);
+                } catch (e) {
+                  console.error(`[WebSocket] 清理旧 runtime 失败:`, e);
+                }
+              }
 
               // Update sessions Map mapping
               sessions.set(data.sessionId, runtime);
