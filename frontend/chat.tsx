@@ -1,37 +1,10 @@
 import { createRoot } from "react-dom/client";
-import { useState, useEffect, useRef, useCallback } from "react";
-import { marked } from "marked";
-import markedKatex from "marked-katex-extension";
-import hljs from "highlight.js";
-import DOMPurify from "dompurify";
+import React, { useState, useEffect, useRef, useCallback, memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 
 /// <reference lib="dom" />
-/// <reference types="preact/jsx-runtime" />
-
-marked.use(
-  markedKatex({
-    throwOnError: false,
-    errorColor: "#ef4444",
-  }),
-);
-
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
-
-const renderer = {
-  code({ text, lang }: { text: string; lang?: string }) {
-    const validLang = lang && hljs.getLanguage(lang) ? lang : "plaintext";
-    const highlighted = hljs.highlight(text, { language: validLang }).value;
-    return `<pre><code className="hljs language-${validLang}">${highlighted}</code></pre>`;
-  },
-};
-
-marked.use({ renderer });
 
 type Message = {
   id: string;
@@ -115,62 +88,8 @@ function formatToolCard(
   return card;
 }
 
-// 检测不完整的 markdown 结构
-function isIncompleteMarkdown(content: string): boolean {
-  // 检查未闭合的代码块
-  const codeBlockCount = (content.match(/```/g) || []).length;
-  if (codeBlockCount % 2 !== 0) return true;
-
-  // 检查未闭合的行内代码
-  const inlineCodeCount = (content.match(/(?<!`)(`+)(?!`)/g) || []).length;
-  if (content.includes("`") && inlineCodeCount % 2 !== 0) return true;
-
-  return false;
-}
-
-// 流式时的格式化（检测不完整结构，使用简单格式）
-function formatStreamingMessage(content: string): string {
-  // 检测不完整的 markdown 结构
-  if (isIncompleteMarkdown(content)) {
-    // 不完整时使用简单格式化
-    let formatted = content
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-
-    // 处理行内代码
-    formatted = formatted.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-
-    // 处理粗体
-    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-
-    // 处理斜体
-    formatted = formatted.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-
-    return `<div className="streaming">${formatted.replace(/\n/g, "<br>")}</div>`;
-  }
-
-  try {
-    // 完整时尝试解析 markdown
-    const parsed = marked.parse(content) as string;
-    return DOMPurify.sanitize(parsed);
-  } catch (e) {
-    // 解析失败，回退到简单格式化
-    let formatted = content
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-
-    formatted = formatted.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    formatted = formatted.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-
-    return `<div className="streaming">${formatted.replace(/\n/g, "<br>")}</div>`;
-  }
-}
-
-// StreamingMarkdown 组件
-function StreamingMarkdown({ content }: { content: string }) {
+// StreamingMarkdown 组件 - 使用 memo 优化
+const StreamingMarkdown = memo(function StreamingMarkdown({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -179,20 +98,7 @@ function StreamingMarkdown({ content }: { content: string }) {
       {content}
     </ReactMarkdown>
   );
-}
-
-// 完整的 markdown 格式化（流式结束后使用）
-function formatMessage(content: string): string {
-  try {
-    // 先解析 markdown
-    const parsed = marked.parse(content) as string;
-    // 再净化 HTML（防止 XSS）
-    return DOMPurify.sanitize(parsed);
-  } catch (e) {
-    console.error("Markdown parse error:", e);
-    return content;
-  }
-}
+});
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
