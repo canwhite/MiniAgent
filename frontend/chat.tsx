@@ -88,16 +88,33 @@ function formatToolCard(
   return card;
 }
 
-// StreamingMarkdown 组件 - 使用 memo 优化
-const StreamingMarkdown = memo(function StreamingMarkdown({ content }: { content: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeHighlight]}
-    >
-      {content}
-    </ReactMarkdown>
-  );
+// StreamingMarkdown 组件 - 使用 createRoot 动态渲染
+const StreamingMarkdown = memo(function StreamingMarkdown({
+  content,
+}: {
+  content: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    if (!rootRef.current) {
+      rootRef.current = createRoot(containerRef.current);
+    }
+
+    rootRef.current.render(
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+      >
+        {content}
+      </ReactMarkdown>,
+    );
+  }, [content]);
+
+  return <div ref={containerRef} />;
 });
 
 function App() {
@@ -112,7 +129,7 @@ function App() {
   const [userScrolled, setUserScrolled] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [apiToken, setApiToken] = useState<string | null>(null);
+  // const [apiToken, setApiToken] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
@@ -710,7 +727,9 @@ function App() {
               <details className="group" open={true}>
                 <summary className="cursor-pointer font-semibold text-gray-700 flex items-center gap-2 hover:text-gray-900">
                   <span>💭 思考过程</span>
-                  <span className="text-xs text-gray-500">（点击展开/折叠）</span>
+                  <span className="text-xs text-gray-500">
+                    （点击展开/折叠）
+                  </span>
                 </summary>
                 <div className="mt-3 text-sm text-gray-600 whitespace-pre-wrap bg-white p-3 rounded border border-gray-200">
                   {msg.content}
@@ -727,7 +746,13 @@ function App() {
               </div>
               <div className="message-content">
                 {msg.role === "tool" && msg.toolType !== "write" ? (
-                  <span dangerouslySetInnerHTML={{ __html: msg.content.replace(/</g, "&lt;").replace(/>/g, "&gt;") }} />
+                  <span
+                    dangerouslySetInnerHTML={{
+                      __html: msg.content
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;"),
+                    }}
+                  />
                 ) : (
                   <>
                     <StreamingMarkdown content={msg.content} />
