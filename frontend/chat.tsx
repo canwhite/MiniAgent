@@ -1,9 +1,12 @@
-import { render } from "preact";
-import { useState, useEffect, useRef, useCallback } from "preact/hooks";
+import { createRoot } from "react-dom/client";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { marked } from "marked";
 import markedKatex from "marked-katex-extension";
 import hljs from "highlight.js";
 import DOMPurify from "dompurify";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 
 /// <reference lib="dom" />
 /// <reference types="preact/jsx-runtime" />
@@ -24,7 +27,7 @@ const renderer = {
   code({ text, lang }: { text: string; lang?: string }) {
     const validLang = lang && hljs.getLanguage(lang) ? lang : "plaintext";
     const highlighted = hljs.highlight(text, { language: validLang }).value;
-    return `<pre><code class="hljs language-${validLang}">${highlighted}</code></pre>`;
+    return `<pre><code className="hljs language-${validLang}">${highlighted}</code></pre>`;
   },
 };
 
@@ -144,7 +147,7 @@ function formatStreamingMessage(content: string): string {
     // 处理斜体
     formatted = formatted.replace(/\*([^*]+)\*/g, "<em>$1</em>");
 
-    return `<div class="streaming">${formatted.replace(/\n/g, "<br>")}</div>`;
+    return `<div className="streaming">${formatted.replace(/\n/g, "<br>")}</div>`;
   }
 
   try {
@@ -162,8 +165,20 @@ function formatStreamingMessage(content: string): string {
     formatted = formatted.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     formatted = formatted.replace(/\*([^*]+)\*/g, "<em>$1</em>");
 
-    return `<div class="streaming">${formatted.replace(/\n/g, "<br>")}</div>`;
+    return `<div className="streaming">${formatted.replace(/\n/g, "<br>")}</div>`;
   }
+}
+
+// StreamingMarkdown 组件
+function StreamingMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeHighlight]}
+    >
+      {content}
+    </ReactMarkdown>
+  );
 }
 
 // 完整的 markdown 格式化（流式结束后使用）
@@ -630,7 +645,7 @@ function App() {
     }
   };
 
-  const handleKeyDown = (e: KeyboardEvent) => {
+  const handleKeyDown = (e: any) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -708,7 +723,7 @@ function App() {
     });
   };
 
-  const deleteSession = async (sessionIdToDelete: string, e: Event) => {
+  const deleteSession = async (sessionIdToDelete: string, e: any) => {
     e.stopPropagation();
     try {
       const res = await fetch(`/api/sessions/${sessionIdToDelete}`, {
@@ -736,40 +751,40 @@ function App() {
 
   return (
     <>
-      <div class="header">
-        <div class={`status-dot ${statusClass}`} />
+      <div className="header">
+        <div className={`status-dot ${statusClass}`} />
         <h1>MiniAgent Chat</h1>
-        <div class="header-right">
-          {sessionId && <span class="session-id">{sessionId}</span>}
-          <button class="history-btn" onClick={toggleHistory}>
+        <div className="header-right">
+          {sessionId && <span className="session-id">{sessionId}</span>}
+          <button className="history-btn" onClick={toggleHistory}>
             history
           </button>
         </div>
         {showHistory && (
-          <div class="history-dropdown" ref={dropdownRef}>
-            <div class="history-dropdown-header">History</div>
+          <div className="history-dropdown" ref={dropdownRef}>
+            <div className="history-dropdown-header">History</div>
             {isLoadingSession ? (
-              <div class="history-dropdown-loading">Loading...</div>
+              <div className="history-dropdown-loading">Loading...</div>
             ) : sessions.length === 0 ? (
-              <div class="history-dropdown-empty">No sessions</div>
+              <div className="history-dropdown-empty">No sessions</div>
             ) : (
               sessions.map((s) => (
-                <div class="history-dropdown-item" key={s.id}>
+                <div className="history-dropdown-item" key={s.id}>
                   <div
-                    class="history-item-content"
+                    className="history-item-content"
                     onClick={() => loadSessionMessages(s)}
                   >
-                    <div class="history-item-question">
+                    <div className="history-item-question">
                       {s.first_question.length > 30
                         ? s.first_question.substring(0, 30) + "..."
                         : s.first_question}
                     </div>
-                    <div class="history-item-time">
+                    <div className="history-item-time">
                       {formatTime(s.created_at)}
                     </div>
                   </div>
                   <button
-                    class="history-delete-btn"
+                    className="history-delete-btn"
                     onClick={(e) => deleteSession(s.session_id, e)}
                     title="删除此会话"
                   >
@@ -782,54 +797,50 @@ function App() {
         )}
       </div>
 
-      <div class="messages" ref={messagesContainerRef}>
+      <div className="messages" ref={messagesContainerRef}>
         {messages.map((msg) =>
           msg.role === "thinking" ? (
-            <div key={msg.id} class="thinking-box">
-              <details class="group" open={true}>
-                <summary class="cursor-pointer font-semibold text-gray-700 flex items-center gap-2 hover:text-gray-900">
+            <div key={msg.id} className="thinking-box">
+              <details className="group" open={true}>
+                <summary className="cursor-pointer font-semibold text-gray-700 flex items-center gap-2 hover:text-gray-900">
                   <span>💭 思考过程</span>
-                  <span class="text-xs text-gray-500">（点击展开/折叠）</span>
+                  <span className="text-xs text-gray-500">（点击展开/折叠）</span>
                 </summary>
-                <div class="mt-3 text-sm text-gray-600 whitespace-pre-wrap bg-white p-3 rounded border border-gray-200">
+                <div className="mt-3 text-sm text-gray-600 whitespace-pre-wrap bg-white p-3 rounded border border-gray-200">
                   {msg.content}
                 </div>
               </details>
             </div>
           ) : (
             <div
-              class={`message ${msg.role} ${msg.isLoading ? "loading" : ""}`}
+              className={`message ${msg.role} ${msg.isLoading ? "loading" : ""}`}
               key={msg.id}
             >
-              <div class="avatar">
+              <div className="avatar">
                 {msg.role === "user" ? "U" : msg.role === "tool" ? "T" : "AI"}
               </div>
-              <div
-                class="message-content"
-                dangerouslySetInnerHTML={{
-                  __html:
-                    msg.role === "tool" && msg.toolType !== "write"
-                      ? msg.content.replace(/</g, "&lt;").replace(/>/g, "&gt;")
-                      : (msg.isStreaming
-                          ? formatStreamingMessage(msg.content)
-                          : formatMessage(msg.content)) +
-                        (msg.isLoading
-                          ? '<span class="loading-spinner"></span>'
-                          : ""),
-                }}
-              />
+              <div className="message-content">
+                {msg.role === "tool" && msg.toolType !== "write" ? (
+                  <span dangerouslySetInnerHTML={{ __html: msg.content.replace(/</g, "&lt;").replace(/>/g, "&gt;") }} />
+                ) : (
+                  <>
+                    <StreamingMarkdown content={msg.content} />
+                    {msg.isLoading && <span className="loading-spinner"></span>}
+                  </>
+                )}
+              </div>
             </div>
           ),
         )}
         {messages.some((m) => m.role === "assistant") && (
-          <button class="clear-btn" onClick={clearChat}>
+          <button className="clear-btn" onClick={clearChat}>
             🧹 Clear
           </button>
         )}
       </div>
 
-      <div class="input-area">
-        <div class="input-container">
+      <div className="input-area">
+        <div className="input-container">
           <input
             type="text"
             placeholder={isConnected ? "输入消息..." : "连接中..."}
@@ -841,7 +852,7 @@ function App() {
           <button
             onClick={isResponding ? handleStopClick : sendMessage}
             disabled={isResponding ? false : !isConnected || !input.trim()}
-            class={isResponding ? "stop-btn" : ""}
+            className={isResponding ? "stop-btn" : ""}
           >
             {isResponding ? "停止" : "发送"}
           </button>
@@ -851,4 +862,5 @@ function App() {
   );
 }
 
-render(<App />, document.getElementById("app")!);
+const root = createRoot(document.getElementById("app")!);
+root.render(<App />);

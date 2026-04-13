@@ -19,7 +19,8 @@
     "katex": "^0.16.40",
     "marked": "^17.0.4",
     "marked-katex-extension": "^5.1.7",
-    "preact": "^10.29.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1"

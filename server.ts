@@ -1152,7 +1152,7 @@ const server = Bun.serve({
             minify: false,
             jsx: {
               runtime: "automatic",
-              importSource: "preact",
+              importSource: "react",
             },
           });
 

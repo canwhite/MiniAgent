@@ -316,6 +316,21 @@ const highlightNewCode = (oldContent: string, newContent: string) => {
 
 ## 实施记录
 
+### 已从 Preact 迁移到 React（2025-04-13）
+
+由于需要使用 react-markdown，将整个前端从 Preact 迁移到 React。
+
+**修改文件：**
+
+1. `package.json` - 将 preact 替换为 react 和 react-dom
+2. `tsconfig.json` - jsxImportSource 从 "preact" 改为 "react"
+3. `server.ts` - importSource 从 "preact" 改为 "react"
+4. `frontend/chat.tsx`:
+   - 导入改为 react
+   - `render` 改为 `createRoot`
+   - `class` 改为 `className`
+   - 添加 StreamingMarkdown 组件
+
 ### 方案 2 改进版已实施（2025-04-13）
 
 由于 react-markdown 与 preact 兼容性问题，方案 4 不可用。改用方案 2 的改进版。
