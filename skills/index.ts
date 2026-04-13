@@ -77,6 +77,15 @@ export const SKILLS: SkillConfig[] = [
     source: "inline",
     disableModelInvocation: false,
   },
+  {
+    name: "simpleman",
+    description:
+      "Token节省模式 - 压缩输出，减少约75% token使用，保持技术准确性。支持 lite/full/ultra/wenyan 等多种强度级别",
+    filePath: `${SKILLS_BASE_DIR}/simpleman/SKILL.md`,
+    baseDir: `${SKILLS_BASE_DIR}/simpleman`,
+    source: "inline",
+    disableModelInvocation: false,
+  },
 ];
 
 /**

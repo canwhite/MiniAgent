@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "preact/hooks";
 import { marked } from "marked";
 import markedKatex from "marked-katex-extension";
 import hljs from "highlight.js";
+import DOMPurify from "dompurify";
 
 /// <reference lib="dom" />
 /// <reference types="preact/jsx-runtime" />
@@ -11,7 +12,7 @@ marked.use(
   markedKatex({
     throwOnError: false,
     errorColor: "#ef4444",
-  })
+  }),
 );
 
 marked.setOptions({
@@ -53,7 +54,13 @@ type WSMessage =
   | { type: "thinking_start"; contentIndex: number }
   | { type: "thinking_delta"; delta: string }
   | { type: "thinking_end"; contentIndex: number; content: string }
-  | { type: "tool_call_delta"; tool: string; path: string; content: string; contentIndex: number }
+  | {
+      type: "tool_call_delta";
+      tool: string;
+      path: string;
+      content: string;
+      contentIndex: number;
+    }
   | { type: "tool_call_start"; tool: string; contentIndex: number }
   | { type: "tool_start"; tool: string; args: any }
   | { type: "tool_end"; tool: string; success: boolean; result: string }
@@ -63,7 +70,11 @@ type WSMessage =
   | { type: "auth_success" }
   | { type: "error"; message: string };
 
-function formatToolCard(toolName: string, args: any, result: string | null): string {
+function formatToolCard(
+  toolName: string,
+  args: any,
+  result: string | null,
+): string {
   let card = `🔧 **${toolName}**\n\n`;
 
   // Display arguments based on tool type
@@ -88,9 +99,11 @@ function formatToolCard(toolName: string, args: any, result: string | null): str
   if (result) {
     // Truncate result if too long (except for edit and write)
     const maxResultLength = 500;
-    const truncatedResult = result.length > maxResultLength
-      ? result.substring(0, maxResultLength) + `\n... (${result.length - maxResultLength} more characters)`
-      : result;
+    const truncatedResult =
+      result.length > maxResultLength
+        ? result.substring(0, maxResultLength) +
+          `\n... (${result.length - maxResultLength} more characters)`
+        : result;
     card += `\n**Result:**\n\`\`\`\n${truncatedResult}\n\`\`\``;
   } else {
     card += `\n⏳ *Running...*`;
@@ -99,18 +112,44 @@ function formatToolCard(toolName: string, args: any, result: string | null): str
   return card;
 }
 
-function formatMessage(content: string): string {
-  // First escape HTML to prevent XSS
-  let formatted = content.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-  // Parse markdown
+// 流式时的格式化（尝试解析 markdown，失败则回退到简单格式）
+function formatStreamingMessage(content: string): string {
   try {
-    formatted = marked.parse(formatted) as string;
+    // 尝试解析 markdown
+    const parsed = marked.parse(content) as string;
+    // 净化 HTML
+    return DOMPurify.sanitize(parsed);
+  } catch (e) {
+    // 如果解析失败，回退到简单格式化
+    let formatted = content
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    // 处理行内代码
+    formatted = formatted.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+    // 处理粗体
+    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+    // 处理斜体
+    formatted = formatted.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+    return `<div class="streaming">${formatted.replace(/\n/g, "<br>")}</div>`;
+  }
+}
+
+// 完整的 markdown 格式化（流式结束后使用）
+function formatMessage(content: string): string {
+  try {
+    // 先解析 markdown
+    const parsed = marked.parse(content) as string;
+    // 再净化 HTML（防止 XSS）
+    return DOMPurify.sanitize(parsed);
   } catch (e) {
     console.error("Markdown parse error:", e);
+    return content;
   }
-
-  return formatted;
 }
 
 function App() {
@@ -132,7 +171,10 @@ function App() {
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const currentWriteToolRef = useRef<{ messageId: string | null; contentIndex: number | null }>({
+  const currentWriteToolRef = useRef<{
+    messageId: string | null;
+    contentIndex: number | null;
+  }>({
     messageId: null,
     contentIndex: null,
   });
@@ -147,7 +189,7 @@ function App() {
     ws.onopen = () => {
       // 连接建立后，发送认证请求（服务器会通过 Cookie 验证）
       console.log("WebSocket 已连接，发送认证请求");
-      ws.send(JSON.stringify({ type: 'auth' }));
+      ws.send(JSON.stringify({ type: "auth" }));
     };
 
     ws.onmessage = (event) => {
@@ -168,8 +210,8 @@ function App() {
           // message_start/message_end 控制停止按钮（每轮消息显示）
           case "message_start":
             setIsResponding(true);
-            streamingMessageIdRef.current = null;  // 重置文本流式消息引用
-            currentThinkMessageRef.current = { id: null };  // 重置 think 消息引用
+            streamingMessageIdRef.current = null; // 重置文本流式消息引用
+            currentThinkMessageRef.current = { id: null }; // 重置 think 消息引用
             break;
 
           case "message_end":
@@ -189,7 +231,9 @@ function App() {
             break;
 
           case "thinking_end":
-            console.log(`[THINKING_END] ContentIndex: ${data.contentIndex}, Length: ${data.content?.length || 0}`);
+            console.log(
+              `[THINKING_END] ContentIndex: ${data.contentIndex}, Length: ${data.content?.length || 0}`,
+            );
             break;
 
           case "response_end":
@@ -222,7 +266,7 @@ function App() {
                     };
                   }
                   return msg;
-                })
+                }),
               );
             }
             break;
@@ -257,7 +301,12 @@ function App() {
               streamingMessageIdRef.current = newId;
               setMessages((prev) => [
                 ...prev,
-                { id: newId, role: "assistant", content: data.delta, isStreaming: true },
+                {
+                  id: newId,
+                  role: "assistant",
+                  content: data.delta,
+                  isStreaming: true,
+                },
               ]);
             } else {
               // 更新现有的流式消息
@@ -307,7 +356,11 @@ function App() {
               // Update the existing loading message and start typing effect
               setMessages((prev) =>
                 prev.map((msg) => {
-                  if (msg.role === "tool" && msg.toolType === "write" && msg.isLoading) {
+                  if (
+                    msg.role === "tool" &&
+                    msg.toolType === "write" &&
+                    msg.isLoading
+                  ) {
                     // Prepare full content with typing effect
                     const fullContent = `📝 写入文件: ${fileName}\n\n📄 内容：\n\`\`\`\n${fileContent}\n\`\`\``;
                     return {
@@ -319,7 +372,7 @@ function App() {
                     };
                   }
                   return msg;
-                })
+                }),
               );
             } else {
               setMessages((prev) => [
@@ -344,7 +397,9 @@ function App() {
               setMessages((prev) =>
                 prev.map((msg) => {
                   if (msg.role === "tool" && msg.toolType === "write") {
-                    const size = data.result ? `${data.result.length} bytes` : "0 bytes";
+                    const size = data.result
+                      ? `${data.result.length} bytes`
+                      : "0 bytes";
                     return {
                       ...msg,
                       content: data.success
@@ -355,22 +410,31 @@ function App() {
                     };
                   }
                   return msg;
-                })
+                }),
               );
             } else {
               // Update other tool messages with the result
               setMessages((prev) =>
                 prev.map((msg) => {
-                  if (msg.role === "tool" && msg.toolType === "other" && msg.toolName === data.tool && msg.isLoading) {
+                  if (
+                    msg.role === "tool" &&
+                    msg.toolType === "other" &&
+                    msg.toolName === data.tool &&
+                    msg.isLoading
+                  ) {
                     return {
                       ...msg,
-                      content: formatToolCard(data.tool, msg.toolArgs, data.result),
+                      content: formatToolCard(
+                        data.tool,
+                        msg.toolArgs,
+                        data.result,
+                      ),
                       toolResult: data.result,
                       isLoading: false,
                     };
                   }
                   return msg;
-                })
+                }),
               );
             }
             break;
@@ -410,7 +474,7 @@ function App() {
     const checkAuth = async () => {
       try {
         // 调用内部认证接口，获取 token 和设置 Cookie
-        const res = await fetch('/api/auth/internal');
+        const res = await fetch("/api/auth/internal");
         if (res.ok) {
           const data = await res.json();
           if (data.success) {
@@ -449,10 +513,14 @@ function App() {
         const currentScrollTop = container.scrollTop;
         const scrollHeight = container.scrollHeight;
         const clientHeight = container.clientHeight;
-        const distanceFromBottom = scrollHeight - currentScrollTop - clientHeight;
+        const distanceFromBottom =
+          scrollHeight - currentScrollTop - clientHeight;
 
         // User is scrolling up or not at bottom
-        if (currentScrollTop < lastScrollTopRef.current || distanceFromBottom > 100) {
+        if (
+          currentScrollTop < lastScrollTopRef.current ||
+          distanceFromBottom > 100
+        ) {
           setUserScrolled(true);
         } else if (distanceFromBottom < 50) {
           // User scrolled back near bottom
@@ -479,7 +547,10 @@ function App() {
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
         setShowHistory(false);
       }
     };
@@ -567,19 +638,23 @@ function App() {
       const data = await res.json();
 
       if (data.messages) {
-        const loadedMessages: Message[] = data.messages.map((msg: any, idx: number) => ({
-          id: `${idx}_${Date.now()}`,
-          role: msg.role,
-          content: msg.content,
-        }));
+        const loadedMessages: Message[] = data.messages.map(
+          (msg: any, idx: number) => ({
+            id: `${idx}_${Date.now()}`,
+            role: msg.role,
+            content: msg.content,
+          }),
+        );
         setMessages(loadedMessages);
 
         // Send switch session message to backend
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: "switch_session",
-            sessionId: data.sessionId,
-          }));
+          wsRef.current.send(
+            JSON.stringify({
+              type: "switch_session",
+              sessionId: data.sessionId,
+            }),
+          );
         }
 
         setSessionId(data.sessionId);
@@ -600,7 +675,10 @@ function App() {
 
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp);
-    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
   const deleteSession = async (sessionIdToDelete: string, e: Event) => {
@@ -623,7 +701,11 @@ function App() {
     }
   };
 
-  const statusClass = isConnected ? "connected" : isConnecting ? "connecting" : "error";
+  const statusClass = isConnected
+    ? "connected"
+    : isConnecting
+      ? "connecting"
+      : "error";
 
   return (
     <>
@@ -632,7 +714,9 @@ function App() {
         <h1>MiniAgent Chat</h1>
         <div class="header-right">
           {sessionId && <span class="session-id">{sessionId}</span>}
-          <button class="history-btn" onClick={toggleHistory}>history</button>
+          <button class="history-btn" onClick={toggleHistory}>
+            history
+          </button>
         </div>
         {showHistory && (
           <div class="history-dropdown" ref={dropdownRef}>
@@ -643,17 +727,19 @@ function App() {
               <div class="history-dropdown-empty">No sessions</div>
             ) : (
               sessions.map((s) => (
-                <div
-                  class="history-dropdown-item"
-                  key={s.id}
-                >
-                  <div class="history-item-content" onClick={() => loadSessionMessages(s)}>
+                <div class="history-dropdown-item" key={s.id}>
+                  <div
+                    class="history-item-content"
+                    onClick={() => loadSessionMessages(s)}
+                  >
                     <div class="history-item-question">
                       {s.first_question.length > 30
                         ? s.first_question.substring(0, 30) + "..."
                         : s.first_question}
                     </div>
-                    <div class="history-item-time">{formatTime(s.created_at)}</div>
+                    <div class="history-item-time">
+                      {formatTime(s.created_at)}
+                    </div>
                   </div>
                   <button
                     class="history-delete-btn"
@@ -670,18 +756,13 @@ function App() {
       </div>
 
       <div class="messages" ref={messagesContainerRef}>
-        {messages.map((msg) => (
+        {messages.map((msg) =>
           msg.role === "thinking" ? (
-            <div
-              key={msg.id}
-              class="thinking-box"
-            >
+            <div key={msg.id} class="thinking-box">
               <details class="group" open={true}>
                 <summary class="cursor-pointer font-semibold text-gray-700 flex items-center gap-2 hover:text-gray-900">
                   <span>💭 思考过程</span>
-                  <span class="text-xs text-gray-500">
-                    （点击展开/折叠）
-                  </span>
+                  <span class="text-xs text-gray-500">（点击展开/折叠）</span>
                 </summary>
                 <div class="mt-3 text-sm text-gray-600 whitespace-pre-wrap bg-white p-3 rounded border border-gray-200">
                   {msg.content}
@@ -689,23 +770,34 @@ function App() {
               </details>
             </div>
           ) : (
-            <div class={`message ${msg.role} ${msg.isLoading ? "loading" : ""}`} key={msg.id}>
+            <div
+              class={`message ${msg.role} ${msg.isLoading ? "loading" : ""}`}
+              key={msg.id}
+            >
               <div class="avatar">
                 {msg.role === "user" ? "U" : msg.role === "tool" ? "T" : "AI"}
               </div>
               <div
                 class="message-content"
                 dangerouslySetInnerHTML={{
-                  __html: msg.role === "tool" && msg.toolType !== "write"
-                    ? msg.content.replace(/</g, "&lt;").replace(/>/g, "&gt;")
-                    : formatMessage(msg.content) + (msg.isLoading ? '<span class="loading-spinner"></span>' : '')
+                  __html:
+                    msg.role === "tool" && msg.toolType !== "write"
+                      ? msg.content.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                      : (msg.isStreaming
+                          ? formatStreamingMessage(msg.content)
+                          : formatMessage(msg.content)) +
+                        (msg.isLoading
+                          ? '<span class="loading-spinner"></span>'
+                          : ""),
                 }}
               />
             </div>
-          )
-        ))}
-        {messages.some(m => m.role === 'assistant') && (
-          <button class="clear-btn" onClick={clearChat}>🧹 Clear</button>
+          ),
+        )}
+        {messages.some((m) => m.role === "assistant") && (
+          <button class="clear-btn" onClick={clearChat}>
+            🧹 Clear
+          </button>
         )}
       </div>
 
@@ -721,7 +813,7 @@ function App() {
           />
           <button
             onClick={isResponding ? handleStopClick : sendMessage}
-            disabled={isResponding ? false : (!isConnected || !input.trim())}
+            disabled={isResponding ? false : !isConnected || !input.trim()}
             class={isResponding ? "stop-btn" : ""}
           >
             {isResponding ? "停止" : "发送"}

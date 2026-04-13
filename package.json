@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.51.5",
+    "@tintinweb/pi-subagents": "^0.5.2",
+    "@tintinweb/pi-tasks": "^0.4.2",
     "dompurify": "^3.3.3",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.40",
