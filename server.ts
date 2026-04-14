@@ -1,3 +1,4 @@
+/// <reference types="bun-types" />
 import {
   createAgentSession,
   type ToolDefinition,
@@ -16,6 +17,8 @@ import {
   getAgentDir,
   createAgentSessionServices,
 } from "@mariozechner/pi-coding-agent";
+import subagents from "@tintinweb/pi-subagents/dist/index.js";
+import tasks from "@tintinweb/pi-tasks/dist/index.js";
 import type { Model } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
 import { join } from "path";
@@ -1026,7 +1029,7 @@ function handleDeleteSession(sessionId: string): Response {
 
 const server = Bun.serve({
   port: PORT,
-  async fetch(req) {
+  async fetch(req: Request) {
     const url = new URL(req.url);
 
     if (req.method === "OPTIONS") {
@@ -1176,7 +1179,7 @@ const server = Bun.serve({
     return new Response("Not Found", { status: 404, headers: corsHeaders });
   },
   websocket: {
-    open(ws) {
+    open(ws: any) {
       // WebSocket 握手时不验证 Cookie（浏览器可能不携带）
       // 等待第一条消息，如果是认证请求则验证，否则假设已通过 Cookie 认证
       console.log("[WebSocket] 新连接已建立");
@@ -1464,7 +1467,7 @@ const server = Bun.serve({
           ws.close(1011, "Session creation failed");
         });
     },
-    async message(ws, message) {
+    async message(ws: any, message: any) {
       try {
         const data = JSON.parse(message.toString()) as {
           type?: string;
@@ -1692,7 +1695,7 @@ const server = Bun.serve({
         );
       }
     },
-    close(ws) {
+    close(ws: any) {
       const sessionId = (ws as any).data?.sessionId;
       const logger = (ws as any).data?.logger;
       console.log(`[WebSocket] 连接已关闭: ${sessionId}`);
