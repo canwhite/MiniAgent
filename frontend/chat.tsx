@@ -1,8 +1,12 @@
+import React, { useState, useEffect, useRef, useCallback, memo, useLayoutEffect, useMemo } from "react";
 import { createRoot } from "react-dom/client";
-import React, { useState, useEffect, useRef, useCallback, memo, useLayoutEffect } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { unified } from "unified";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import rehypeReact from "rehype-react";
 import rehypeHighlight from "rehype-highlight";
+import remarkGfm from "remark-gfm";
+import { jsx, jsxs } from "react/jsx-runtime";
 
 /// <reference lib="dom" />
 
@@ -88,43 +92,38 @@ function formatToolCard(
   return card;
 }
 
-// StreamingMarkdown 组件 - 使用 createRoot 动态渲染
+// AST processor 全局单例
+const markdownProcessor = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkRehype, { allowDangerousHtml: true })
+  .use(rehypeHighlight)
+  .use(rehypeReact, { jsx, jsxs, Fragment: React.Fragment });
+
+// AST 缓存
+const astCache = new Map<string, React.ReactNode>();
+
+// StreamingMarkdown 组件 - 使用 AST 渲染
 const StreamingMarkdown = memo(function StreamingMarkdown({
   content,
 }: {
   content: string;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const rootRef = useRef<any>(null);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    if (!rootRef.current) {
-      rootRef.current = createRoot(containerRef.current);
+  const ast = useMemo(() => {
+    if (astCache.has(content)) {
+      return astCache.get(content);
     }
-
-    rootRef.current.render(
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
-      >
-        {content}
-      </ReactMarkdown>,
-    );
+    try {
+      const result = markdownProcessor.processSync({ value: content }).result;
+      astCache.set(content, result);
+      return result;
+    } catch (e) {
+      console.error('Markdown parse error:', e);
+      return <span className="error">{content}</span>;
+    }
   }, [content]);
 
-  // 清理函数
-  useEffect(() => {
-    return () => {
-      if (rootRef.current) {
-        rootRef.current.unmount();
-        rootRef.current = null;
-      }
-    };
-  }, []);
-
-  return <div ref={containerRef} />;
+  return <div className="markdown-body">{ast}</div>;
 });
 
 function App() {
