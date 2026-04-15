@@ -92,6 +92,17 @@ function formatToolCard(
   return card;
 }
 
+// 预处理 Markdown - 修复常见格式问题
+function preprocessMarkdown(content: string): string {
+  return content
+    // 修复标题后缺少空格: ##标题 → ## 标题
+    .replace(/^(#{1,6})([^\s#])/gm, '$1 $2')
+    // 修复列表符号后缺少空格: -项目 → - 项目
+    .replace(/^([*\-])([^\s])/gm, '$1 $2')
+    // 修复有序列表缺少空格: 1.项目 → 1. 项目
+    .replace(/^(\d+\.)([^\s])/gm, '$1 $2');
+}
+
 // AST processor 全局单例
 const markdownProcessor = unified()
   .use(remarkParse)
@@ -110,12 +121,15 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
   content: string;
 }) {
   const ast = useMemo(() => {
-    if (astCache.has(content)) {
-      return astCache.get(content);
+    // 预处理内容
+    const processedContent = preprocessMarkdown(content);
+
+    if (astCache.has(processedContent)) {
+      return astCache.get(processedContent);
     }
     try {
-      const result = markdownProcessor.processSync({ value: content }).result;
-      astCache.set(content, result);
+      const result = markdownProcessor.processSync({ value: processedContent }).result;
+      astCache.set(processedContent, result);
       return result;
     } catch (e) {
       console.error('Markdown parse error:', e);
