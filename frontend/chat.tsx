@@ -1,6 +1,5 @@
 import { createRoot } from "react-dom/client";
 import React, { useState, useEffect, useRef, useCallback, memo, useLayoutEffect } from "react";
-import { flushSync } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -105,17 +104,14 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
       rootRef.current = createRoot(containerRef.current);
     }
 
-    // 使用 flushSync 强制同步更新
-    flushSync(() => {
-      rootRef.current.render(
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-        >
-          {content}
-        </ReactMarkdown>,
-      );
-    });
+    rootRef.current.render(
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+      >
+        {content}
+      </ReactMarkdown>,
+    );
   }, [content]);
 
   // 清理函数
