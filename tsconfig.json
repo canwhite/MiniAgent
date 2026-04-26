@@ -2,7 +2,7 @@
   "compilerOptions": {
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "target": "ESNext",
-    "module": "Preserve",
+    "module": "ESNext",
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "jsxImportSource": "react",
@@ -19,9 +19,9 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,
-    "types": [],
-    "typeRoots": ["./node_modules/@types", "./types"]
+    "types": ["bun-types"],
+    "typeRoots": ["./node_modules/@types", "./node_modules", "./types"]
   },
-  "include": ["server.ts", "lib/**/*.ts", "db/**/*.ts", "tools/**/*.ts", "skills/**/*.ts", "prompts/**/*.ts", "types/**/*.d.ts"],
+  "include": ["server/**/*.ts", "lib/**/*.ts", "db/**/*.ts", "tools/**/*.ts", "skills/**/*.ts", "prompts/**/*.ts", "types/**/*.d.ts"],
   "exclude": ["node_modules", "frontend"]
 }
