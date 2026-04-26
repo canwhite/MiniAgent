@@ -8,9 +8,9 @@ import {
   SessionManager,
   AuthStorage,
   ModelRegistry,
-  createExtensionRuntime,
   createSyntheticSourceInfo,
   createAgentSessionRuntime,
+  DefaultResourceLoader,
   AgentSessionRuntime,
   type CreateAgentSessionRuntimeFactory,
   getAgentDir,
@@ -74,6 +74,25 @@ const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async (
     ? createModel()
     : getModel("anthropic", "claude-sonnet-4-20250514");
 
+  const skills = SKILLS.map((s) => ({
+    ...s,
+    sourceInfo: createSyntheticSourceInfo(s.filePath, {
+      source: s.source,
+      baseDir: s.baseDir,
+    }),
+  }));
+
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir: getAgentDir(),
+    extensionFactories: [subagents as any, tasks as any],
+    skillsOverride: () => ({ skills, diagnostics: [] }),
+    systemPromptOverride: () => systemPrompt,
+    noPromptTemplates: true,
+    noThemes: true,
+  });
+  await resourceLoader.reload();
+
   const result = await createAgentSession({
     ...options,
     model,
@@ -86,30 +105,7 @@ const createRuntimeFactory: CreateAgentSessionRuntimeFactory = async (
       createEditTool(cwd),
     ],
     customTools: TOOLS.map((t) => t.tool),
-    resourceLoader: {
-      getExtensions: () => ({
-        extensions: [],
-        errors: [],
-        runtime: createExtensionRuntime(),
-      }),
-      getSkills: () => ({
-        skills: SKILLS.map((s) => ({
-          ...s,
-          sourceInfo: createSyntheticSourceInfo(s.filePath, {
-            source: s.source,
-            baseDir: s.baseDir,
-          }),
-        })),
-        diagnostics: [],
-      }),
-      getPrompts: () => ({ prompts: [], diagnostics: [] }),
-      getThemes: () => ({ themes: [], diagnostics: [] }),
-      getAgentsFiles: () => ({ agentsFiles: [] }),
-      getSystemPrompt: () => systemPrompt,
-      getAppendSystemPrompt: () => [],
-      extendResources: () => {},
-      reload: async () => {},
-    },
+    resourceLoader,
   });
 
   // 创建 services 以返回完整的 RuntimeResult
