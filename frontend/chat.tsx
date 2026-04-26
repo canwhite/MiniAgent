@@ -46,6 +46,7 @@ type WSMessage =
   | { type: "tool_end"; tool: string; success: boolean; result: string }
   | { type: "response_start" }
   | { type: "response_end" }
+  | { type: "turn_end"; content: string }
   | { type: "think_block"; content: string }
   | { type: "auth_success" }
   | { type: "error"; message: string };
@@ -231,6 +232,19 @@ function App() {
             setMessages((prev) =>
               prev.map((msg) => ({ ...msg, isStreaming: false })),
             );
+            break;
+
+          case "turn_end":
+            // 用 session 的完整内容替换流式消息，触发 StreamingMarkdown 正确渲染
+            if (data.content && streamingMessageIdRef.current) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === streamingMessageIdRef.current
+                    ? { ...msg, content: data.content, isStreaming: false }
+                    : msg,
+                ),
+              );
+            }
             break;
 
           case "tool_call_delta":

@@ -252,9 +252,16 @@ function setupEventSubscriptionForSwitch(ws: any, session: AgentSession, logger:
       isProcessingMessageEnd = false;
     }
 
-    // turn_end: 记录日志，不发送 response_end（可能还有新轮次）
+    // turn_end: 发送完整消息内容供前端重新渲染
     if (event.type === "turn_end") {
-      logger.log("[SESSION] turn_end 收到，等待 agent_end");
+      logger.log("[SESSION] turn_end 收到，发送完整内容");
+      const completeContent = extractCompleteContent((event as any).message);
+      ws.send(
+        JSON.stringify({
+          type: "turn_end",
+          content: completeContent,
+        }),
+      );
     }
 
     // agent_end: 整个 Agent 执行结束，发送 response_end
@@ -800,6 +807,21 @@ async function getLastAssistantMessageFromFile(
     return "";
   } catch (e) {
     logger?.log(`[SESSION] 读取文件失败: ${e}`);
+    return "";
+  }
+}
+
+/**
+ * 从 turn_end 事件的 message 中提取完整文本内容（基于内存，无文件 I/O）
+ */
+function extractCompleteContent(message: any): string {
+  try {
+    const textParts =
+      message?.content
+        ?.filter((c: any) => c.type === "text" || c.type === "thinking")
+        .map((c: any) => (c.type === "thinking" ? c.thinking : c.text)) || [];
+    return textParts.join("");
+  } catch (e) {
     return "";
   }
 }
@@ -1392,9 +1414,16 @@ const server = Bun.serve({
               isProcessingMessageEnd = false;
             }
 
-            // turn_end: 记录日志，不发送 response_end（可能还有新轮次）
+            // turn_end: 发送完整消息内容供前端重新渲染
             if (event.type === "turn_end") {
-              logger.log("[SESSION] turn_end 收到，等待 agent_end");
+              logger.log("[SESSION] turn_end 收到，发送完整内容");
+              const completeContent = extractCompleteContent((event as any).message);
+              ws.send(
+                JSON.stringify({
+                  type: "turn_end",
+                  content: completeContent,
+                }),
+              );
             }
 
             // agent_end: 整个 Agent 执行结束，发送 response_end
