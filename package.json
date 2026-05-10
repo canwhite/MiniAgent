@@ -28,6 +28,9 @@
     "remark-rehype": "^11.1.2",
     "unified": "^11.0.5"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@google/genai", "koffi", "protobufjs"]
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/react": "^19.2.14",
