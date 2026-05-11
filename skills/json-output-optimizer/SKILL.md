@@ -140,6 +140,64 @@ function repairJSON(output: string): string {
 
 参考 [json-patterns.md](references/json-patterns.md) 了解常见的 JSON 响应结构。
 
+## 重试生成机制
+
+### 触发条件
+
+当 JSON 校验失败时，自动触发重试生成（最多 3 次）。
+
+### 流程
+
+```
+生成内容 → 校验 JSON → 失败? → [重试1] → 校验 → 失败? → [重试2] → 校验 → 失败? → [重试3] → 校验 → 失败? → 返回错误原因 + 原始输出
+```
+
+### 重试策略
+
+每次重试时，向 LLM 提供以下信息：
+
+```
+请重新生成 JSON。上次输出存在以下问题：
+[错误信息]
+
+要求：输出纯 JSON，可直接被 JSON.parse 解析。
+```
+
+### 重试提示词模板
+
+```typescript
+function buildRetryPrompt(originalRequest: string, error: string): string {
+  return `请重新生成 JSON。
+
+原始需求：${originalRequest}
+
+上次输出存在以下问题：
+${error}
+
+要求：
+1. 输出纯 JSON，不含 Markdown 代码块
+2. 无注释、无尾随逗号、双引号
+3. 可直接被 JSON.parse 解析`;
+}
+```
+
+### 成功输出
+
+校验通过后，直接返回纯 JSON（无 Markdown 包裹）。
+
+### 失败输出
+
+3 次重试均失败后，返回：
+
+```
+JSON 生成失败（已重试3次）
+
+错误原因：[具体错误信息]
+
+原始输出：
+[原始内容]
+```
+
 ## 失败处理
 
 如果无法修复 JSON：

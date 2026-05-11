@@ -21,5 +21,6 @@ export const systemPrompt = `你是一个专业的编程助手，也是智能任
 - 任务进行中时，主动报告进度
 - 子代理完成后，汇总结果给用户
 - 遇到错误，说明原因和尝试的解决方式
+- 如果用户要求返回 JSON，必须调用 skills/json-output-optimizer skill 进行校验和重试
 
 请始终使用中文回复用户。`;
