@@ -8,7 +8,8 @@
   "scripts": {
     "start": "bun run server/index.ts",
     "example": "bun run examples/index.ts --example",
-    "test": "bun run test-gateway.ts"
+    "test": "bun run test-gateway.ts",
+    "build": "bun build --no-bundle server/index.ts"
   },
   "dependencies": {
     "@mariozechner/pi-ai": "^0.66.1",

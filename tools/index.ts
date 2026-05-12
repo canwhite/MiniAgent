@@ -5,7 +5,7 @@
  */
 
 import { getCurrentTimeTool } from "./get-current-time.js";
-import { writeFileTool } from "./write-file.js";
+// import { writeFileTool } from "./write-file.js";
 
 export interface ToolConfig {
   name: string;
@@ -26,11 +26,11 @@ export const TOOLS: ToolConfig[] = [
     description: "获取当前时间和日期",
     tool: getCurrentTimeTool,
   },
-  {
-    name: "write-file",
-    description: "将内容写入文件，支持创建新文件或覆盖现有文件",
-    tool: writeFileTool,
-  },
+//   {
+//     name: "write-file",
+//     description: "将内容写入文件，支持创建新文件或覆盖现有文件",
+//     tool: writeFileTool,
+//   },
 ];
 
 /**

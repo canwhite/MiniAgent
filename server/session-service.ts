@@ -254,41 +254,31 @@ async function waitForSessionComplete(
 async function getLastAssistantMessageFromFile(
   sessionFilePath: string,
   logger?: { log: (msg: string) => void },
-): Promise<string> {
+): Promise<any[]> {
   try {
     const file = Bun.file(sessionFilePath);
     const fileContent = await file.text();
     const lines = fileContent.split("\n").filter(Boolean);
 
-    // 从后往前找最后一条 assistant 消息
-    for (let i = lines.length - 1; i >= 0; i--) {
+    const messages: any[] = [];
+    for (const line of lines) {
       try {
-        const line = lines[i];
         if (!line) continue;
         const data = JSON.parse(line);
         if (data.type === "message" && data.message?.role === "assistant") {
-          // 提取所有 text 类型的 content
-          const textParts =
-            data.message.content
-              ?.filter((c: any) => c.type === "text" || c.type === "thinking")
-              .map((c: any) => (c.type === "thinking" ? c.thinking : c.text)) ||
-            [];
-
-          logger?.log(
-            `[SESSION] 从文件读取最后一条 assistant 消息，长度: ${textParts.join("").length}`,
-          );
-          return textParts.join("");
+          messages.push(data.message);
         }
-      } catch (e) {
-        // Skip invalid JSON lines
-      }
+      } catch (e) {}
     }
 
-    logger?.log("[SESSION] 未找到 assistant 消息");
-    return "";
+    const lastMessage = messages[messages.length - 1];
+    logger?.log(
+      `[SESSION] 从文件读取 ${messages.length} 条 assistant 消息`,
+    );
+    return messages;
   } catch (e) {
     logger?.log(`[SESSION] 读取文件失败: ${e}`);
-    return "";
+    return [];
   }
 }
 

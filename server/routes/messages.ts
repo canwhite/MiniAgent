@@ -100,16 +100,15 @@ async function handleApiMessage(req: Request): Promise<Response> {
       fullTextResponse = textParts.join("");
     }
 
-    // 从完整文本中提取最终内容
-    generatedContent = extractFromSessionText(fullTextResponse, logger);
+    generatedContent = extractFromSessionText(sessionMessages, logger);
 
     // 如果事件中没有内容，尝试从文件读取（后备方案）
-    if (!fullTextResponse && sessionFilePath) {
-      fullTextResponse = await getLastAssistantMessageFromFile(
+    if ((!generatedContent || generatedContent === "") && sessionFilePath) {
+      const fileMessages = await getLastAssistantMessageFromFile(
         sessionFilePath,
         logger,
       );
-      generatedContent = extractFromSessionText(fullTextResponse, logger);
+      generatedContent = extractFromSessionText(fileMessages, logger);
     }
 
     logger.log(

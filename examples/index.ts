@@ -129,7 +129,7 @@ const systemPrompt = `你是一个专业的编程助手，可以帮助用户完�
 
 你的能力包括：
 - 执行 shell 命令
-- 读写文件
+- 读文件
 - 网络搜索
 - 获取当前时间
 
@@ -161,7 +161,7 @@ async function createSession() {
     thinkingLevel: "off",
     authStorage,
     modelRegistry,
-    tools: [createReadTool(cwd), createBashTool(cwd), createWriteTool(cwd)],
+    tools: [createReadTool(cwd), createBashTool(cwd), /* createWriteTool(cwd) */],
     customTools: [webSearchTool, getCurrentTimeTool],
     sessionManager: SessionManager.inMemory(),
     //这也是一个关键因素
